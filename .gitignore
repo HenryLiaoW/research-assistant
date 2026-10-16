@@ -1,0 +1,17 @@
+# 密钥
+.env
+
+# 虚拟环境
+.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 本地数据库与运行日志（后续阶段会用到）
+*.sqlite3
+*.db
+logs/
+
+# macOS
+.DS_Store
