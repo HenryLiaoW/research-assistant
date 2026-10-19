@@ -56,3 +56,23 @@ token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631�
   A：不报错；回滚只在 except OpenAIError 里，超时是正常 return，不触发。尾部停在上一轮的 [assistant(tool_calls), tool]，没有收尾；下一问 append user 后变成 [tool, user]，协议合法但模型看到未回答的工具结果，可能把上一问补答一遍。（第一次答成"尾部是超时说明的 assistant"，漏了"append 不存在"这个前提。）
 - Q5 before 在哪一步记的？-1 删的是哪条？挪到 append(user) 之前该怎么写？
   A：before 在 append(user) 之后、run_agent 之前记的，是长度；before-1 就是刚追加那条 user 的下标，del history[before-1:] 把这一问连同半截产物全删。若挪到 append 之前，before 本身就是 user 的下标，写 del history[before:]。
+
+## 阶段 2 下半 —— SQLite 长期记忆（2026-10-19 跑通）
+
+验收记录：29 个离线测试 OK；"记住：…10 个随机种子" → save_memory id=2；/quit 重开后问"用了几个种子" → search_memory 命中，答 10 个并说明来自记忆；问截止日期 → 查空，如实说没有记录；"我今天跑了 5 公里" → 不存、不说记下了、反问是否需要记；"忘掉种子那条" → search → forget 两轮；memory.sqlite3 存在且不在 git status 里。
+
+1. 这轮加了什么：memory.py 存储层（一张表 id/content/created_at/deleted；connect/save/search/forget/list_all，全部参数化 SQL，软删除）；tools.py 三个薄封装工具 save_memory / search_memory / forget_memory，补上模型不该管的连接和 limit；config 加库路径、检索上限和系统提示规则 6/7/8；chat.py 加 /memories 直接读库；eval/cases.md 开始累积评估用例。agent.py 不动。
+2. 为什么这样设计：写入权在用户不在模型——靠提示词"只有用户明确要求记住才存"，程序不做关键词判断；检索用 LIKE 子串匹配，几十条原话级记忆够用，语义检索留给阶段 4；软删除保留追溯；参数化 SQL 让模型给的任何文字都只是值，且模型没有执行 SQL 的入口；/memories 不经模型，是核对"它到底存没存"的真相来源。
+3. 提示词迭代记录：第 1 版规则 7 写"问到以前说过的事时先查"，模型把"用了几个种子"当成统计题反问、问截止日期时反问"需要我查吗"、没说记住却答"记下了"（2.5/2.6/2.7 三个用例失败）。第 2 版：触发条件改为"询问关于他自己的任何事实"，加"必须、不要反问"；规则 6 加"没调工具不能说记下了"；工具描述同步。三个用例转为通过。同一模型、同一次运行，措辞差一个"必须"行为就不同——这就是 Prompt 设计的实际内容。
+4. 学习用的简化（以后要改）：
+   - 规则只靠提示词约束，模型偶尔仍可能违反；程序层没有兜底（例如对 save_memory 的调用做二次确认）。
+   - LIKE 匹配对同义词、换说法无效（问"随机种子数量"可能查不到"用了 10 个种子"）。
+   - 每轮重发三个工具菜单 + 八条规则，首轮 prompt 从 475 涨到 909；工具越多底价越高。
+   - 模型会为一个问题并行发多个 search_memory（不同关键词），合理但多占历史 token。
+   - 两个 SQLite 连接（tools.py 给模型、chat.py 给 /memories）各自独立，单进程没问题，多进程/网页阶段要重新考虑。
+
+自测问答：
+- Q /memories 为什么不做成模型工具？A：它是核对视图，必须不经模型才可信；而且只读、不花 token。给用户看的核对直接读库，给模型用的能力做工具。
+- Q setUp/tearDown 为什么每个测试建临时库？A：共用一个库时测试结果取决于运行顺序，时好时坏。
+- Q forget 改成真 DELETE，软删测试哪个断言失败？A：只有直接查表那个（fetchone 返回 None）；search/list_all 仍为空。测试要测设计决定，不只测表面行为。
+- Q 注入测试靠什么通过？A：INSERT 用 ? 占位符，content 作为值传入；改成 f-string 拼接，表会被 DROP，search 报 no such table。

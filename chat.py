@@ -7,9 +7,11 @@ chat.py — 阶段 2（上半）：多轮对话。同一次运行里，模型能
 命令：
     /new       清空会话历史，重新开始（只保留系统提示）
     /history   显示当前历史里有多少条消息、多少个回合
+    /memories  列出长期记忆库里的全部有效记忆（直接读数据库，不经过模型）
     /quit      退出（Ctrl-D 或 Ctrl-C 也可以）
 
-本阶段的"记忆"只在内存里：程序一退出就没了。跨运行的长期记忆（SQLite）是阶段 2 的下半。
+两种记忆：会话历史只在内存里、按回合裁剪、程序退出即失；长期记忆在 SQLite 文件里，
+只在用户明确要求"记住"时由模型调用 save_memory 写入，跨运行保留。
 
 会发给 API 的内容：AGENT_SYSTEM_PROMPT、本次会话中保留的历史消息（最多 config.MAX_HISTORY_TURNS 个回合）、
 工具菜单、工具请求与结果。不会发送本机任何文件。
@@ -20,6 +22,7 @@ import time
 from openai import OpenAIError
 
 import config
+import memory
 from agent import log, new_history, run_agent
 from llm_client import build_client, describe_api_error, load_api_key
 
@@ -31,8 +34,9 @@ def describe_history(history: list) -> str:
 
 def main() -> None:
     client = build_client(load_api_key())
-    history = new_history() # start a new conv, the role is system
-    print("多轮对话已开始。输入 /new 重开，/history 查看历史，/quit 退出。")
+    history = new_history()
+    memory_conn = memory.connect(config.MEMORY_DB_PATH)  # 只给 /memories 用；模型走 tools.py 里的连接
+    print("多轮对话已开始。输入 /new 重开，/history 查看历史，/memories 看长期记忆，/quit 退出。")
 
     while True:
         try:
@@ -52,6 +56,13 @@ def main() -> None:
             continue
         if text == "/history":
             print(f"[history] {describe_history(history)}")
+            continue
+        if text == "/memories":
+            rows = memory.list_all(memory_conn)
+            if not rows:
+                print("[memory] 长期记忆为空。")
+            for r in rows:
+                print(f"[memory] #{r['id']}  {r['created_at']}  {r['content']}")
             continue
 
         history.append({"role": "user", "content": text})

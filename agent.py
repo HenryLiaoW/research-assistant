@@ -87,7 +87,7 @@ def execute_tool_calls(tool_calls, messages: list) -> list:
     for tc in tool_calls:
         name = tc.function.name
         args_json = tc.function.arguments
-        log("tool", f"模型请求调用 {name}，参数 {args_json}")
+        log("tool-call", f"模型请求调用 {name}，参数 {args_json}")
 
         t0 = time.perf_counter()
         result = run_tool(name, args_json)  # 永远返回带 ok 字段的 dict，不抛异常

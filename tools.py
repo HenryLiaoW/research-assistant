@@ -13,6 +13,9 @@ import json
 import math
 import statistics
 
+import config
+import memory
+
 # ---- 菜单：发给模型的工具定义（OpenAI 兼容格式）----
 TOOLS = [
     {
@@ -35,7 +38,58 @@ TOOLS = [
                 "required": ["numbers"],
             },
         },
-    }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": (
+                "把一条信息写入长期记忆（跨会话保存）。"
+                "只有当用户明确要求记住、记下来、保存某件事时才调用；内容用用户的原话。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "要记住的内容（用户原话）"}
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": (
+                "按关键词在长期记忆里查找，返回最近的若干条（含 id）。"
+                "用户问到以前说过的事时调用；关键词留空则返回最近记录。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "关键词，子串匹配；可为空字符串"}
+                },
+                "required": ["keyword"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget_memory",
+            "description": (
+                "按 id 删除一条长期记忆（软删除，之后查不到）。"
+                "只有当用户明确要求忘掉、删掉某条记忆时才调用；id 必须来自 search_memory 的结果。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "integer", "description": "要删除的记忆 id"}
+                },
+                "required": ["memory_id"],
+            },
+        },
+    },
 ]
 
 
@@ -69,9 +123,32 @@ def calculate_stats(numbers) -> dict:
     }
 
 
+# ---- 长期记忆工具（阶段 2 下半）：薄薄一层，把 memory.py 的函数包成工具 ----
+# 数据库连接在模块加载时打开一次，整个进程共用。路径来自 config，文件不进 git。
+_memory_conn = memory.connect(config.MEMORY_DB_PATH)
+
+
+def save_memory(content) -> dict:
+    """写入一条记忆。谁调用：run_tool()。输入：用户原话。输出：ok + 新 id。"""
+    return memory.save(_memory_conn, content)
+
+
+def search_memory(keyword) -> dict:
+    """关键词查找。谁调用：run_tool()。输出：ok + results 列表（每条含 id / content / created_at）。"""
+    return memory.search(_memory_conn, keyword, limit=config.MEMORY_SEARCH_LIMIT)
+
+
+def forget_memory(memory_id) -> dict:
+    """软删除。谁调用：run_tool()。输入：id。输出：ok；id 不存在或已删则 ok=False。"""
+    return memory.forget(_memory_conn, memory_id)
+
+
 # 工具名 → 实现函数。模型给的名字只在这张表里查，不会凭名字去执行任意代码。
 TOOL_IMPLEMENTATIONS = {
     "calculate_stats": calculate_stats,
+    "save_memory": save_memory,
+    "search_memory": search_memory,
+    "forget_memory": forget_memory,
 }
 
 
