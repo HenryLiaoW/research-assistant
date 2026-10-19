@@ -30,3 +30,29 @@
 练习结果：MAX_TOOL_ROUNDS=1 时，第 1 轮模型要工具、工具算完、循环到头，状态 max_rounds，用户看不到 0.5425。预测与实际一致。
 
 token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631（= 452 重发 + 56 工具请求 + ≈120 工具结果）。两轮分别计费，总输入 1083。菜单每轮都在，结果从第 2 轮起才有。
+
+## 阶段 2 上半 —— 多轮会话历史（2026-10-19 跑通）
+
+验收记录：19 个离线测试 OK；chat.py 第 1 问调工具得 0.5425 / 0.0444；第 2 问"把最大的去掉再算"不重复数字，模型从历史取出 0.52、0.55、0.49 调工具得 0.52 / 0.0245；/history 显示 9 条消息 2 个回合；/new 后再问，模型如实说没有记录。
+
+1. 这轮加了什么：主程序变成 chat.py。它持有一个 history 列表，每问 append 一条 user 交给 run_agent；run_agent 在同一个列表上追加工具请求、工具结果和最终回答，所以 chat.py 不需要接收返回值就拿到了完整历史。每次调用开头按 MAX_HISTORY_TURNS 整回合裁剪（从倒数第 N 条 user 切，system 永远保留）。所有结束方式（正常回答、截断、超时、轮数用尽）都先 append 一条 assistant 再 return，保证每条 user 后面必有收尾。chat.py 用 before 记住提问前的长度，API 报错时 del history[before-1:] 把这一问连同半截产物撤掉。轮数用尽时把最后一轮工具的原始结果附进回答，不再只留在日志里。
+2. 为什么这样设计：API 无状态，模型"记得"只因为每次把历史整段重发——第 2 问 prompt 689 = 628（第 1 问第 2 轮的 prompt，即 system + 菜单 + 问题 + 工具请求 + 工具结果）+ 46（第 1 问的最终回答）+ 15（第 2 问本身）。历史会无限长，所以必须有上限；裁剪必须整回合删，否则 tool_calls 和 tool 结果被切散会被 API 以 400 拒绝。history / messages 是同一个列表对象，如果写成 copy()，程序不报错、测试全过，但模型从第 2 问起失忆。
+3. 学习用的简化（以后要改）：
+   - 裁剪是硬丢弃，早期回合原文全丢；真正重要的事实要靠阶段 2 下半的 SQLite 长期记忆另存，不能靠会话历史。
+   - 历史只在内存，程序退出就没了；没有摘要压缩。
+   - 回滚只覆盖 OpenAIError，其他异常（比如工具里的 bug 冒出来）不会回滚。
+   - MAX_HISTORY_TURNS 的含义是"发给模型的 user 总数（含当前这问）"，设 1 等于没有历史，应至少为 2。
+
+练习结果：MAX_HISTORY_TURNS=1 时 user_indexes[-1] 就是刚追加的那问，返回 [system, 当前问]，模型看不到任何上一轮内容。推导与裁剪时机（run_agent 开头、append 之后）一致。
+
+自测问答（2026-10-19）：
+- Q1 chat.py 没写 history = run_agent(...)，history 为什么会多出 3 条？改成 messages = history.copy() 会怎样？
+  A：agent.py 第 126 行 messages = history 让两个名字指向同一个列表，之后 run_agent 里 messages.append 的工具请求、工具结果、最终回答三条就直接进了 history。每一问的 messages 都由 history 赋值而来，改成 copy() 后 append 进 messages 的内容无法同步回 history，函数退出即丢；第 2 问时模型只看到 [system, user1, user2]，没有结果也没有回答，会反问。
+- Q2 MAX_HISTORY_TURNS=3，前 4 问都正常结束，第 5 问刚 append、run_agent 开始裁剪：保留哪些？模型看得到第 2 问的结果吗？
+  A：保留倒数 3 个回合（第 3、4、5 问），第 5 问本身算一个；第 1、2 问整回合丢弃，模型看不到第 2 问的结果。
+- Q3 第 2 问第 1 轮 prompt 689 比第 1 问第 1 轮 475 多出的 214 是什么？
+  A：475 = system prompt + 工具菜单 + 第 1 问。多出的 214 = 第 1 问的工具请求（56）+ 工具结果（97）+ 第 1 问的最终回答（46）+ 第 2 问本身（15）。
+- Q4 超时那处漏了 append 直接 return，会报错吗？历史尾部是什么？回滚会清掉吗？
+  A：不报错；回滚只在 except OpenAIError 里，超时是正常 return，不触发。尾部停在上一轮的 [assistant(tool_calls), tool]，没有收尾；下一问 append user 后变成 [tool, user]，协议合法但模型看到未回答的工具结果，可能把上一问补答一遍。（第一次答成"尾部是超时说明的 assistant"，漏了"append 不存在"这个前提。）
+- Q5 before 在哪一步记的？-1 删的是哪条？挪到 append(user) 之前该怎么写？
+  A：before 在 append(user) 之后、run_agent 之前记的，是长度；before-1 就是刚追加那条 user 的下标，del history[before-1:] 把这一问连同半截产物全删。若挪到 append 之前，before 本身就是 user 的下标，写 del history[before:]。
