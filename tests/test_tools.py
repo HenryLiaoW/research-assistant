@@ -3,9 +3,11 @@
 运行：python -m unittest -v tests.test_tools
 """
 
+import json
 import math
 import unittest
 
+import tools
 from tools import calculate_stats, run_tool
 
 
@@ -85,6 +87,38 @@ class RunToolTests(unittest.TestCase):
             self.assertIsInstance(r, dict)
             self.assertFalse(r["ok"])
 
+
+
+class CsvToolDispatchTests(unittest.TestCase):
+    """阶段 3：CSV 工具经过 run_tool 调度，和模型真实调用时走同一条路。读项目里的 data/sample_results.csv。"""
+
+    def test_menu_and_registry_match(self):
+        # 菜单里的名字和登记表的名字必须一一对应，拼错一个字模型就调不到
+        menu_names = {t["function"]["name"] for t in tools.TOOLS}
+        self.assertEqual(menu_names, set(tools.TOOL_IMPLEMENTATIONS))
+
+    def test_group_statistics_through_dispatcher(self):
+        r = run_tool("group_statistics",
+                     '{"file": "sample_results.csv", "value_column": "c_index", "group_by": "config"}')
+        self.assertTrue(r["ok"])
+        self.assertEqual([g["group"] for g in r["groups"]], ["baseline", "survival_sup", "survival_sup_aug"])
+        json.dumps(r, ensure_ascii=False)   # agent.py 要做的事，必须不报错
+
+    def test_group_by_is_optional(self):
+        for args in ('{"file": "sample_results.csv", "value_column": "ari"}',
+                     '{"file": "sample_results.csv", "value_column": "ari", "group_by": null}'):
+            r = run_tool("group_statistics", args)
+            self.assertTrue(r["ok"], args)
+            self.assertEqual(r["groups"][0]["count"], 30)
+
+    def test_path_attack_through_dispatcher(self):
+        r = run_tool("describe_experiment_file", '{"file": "../.env"}')
+        self.assertFalse(r["ok"])
+
+    def test_model_cannot_choose_directory(self):
+        self.assertTrue(run_tool("list_experiment_files", "{}")["ok"])
+        r = run_tool("list_experiment_files", '{"data_dir": "/"}')   # 菜单里没有这个参数，硬塞也不行
+        self.assertFalse(r["ok"])
 
 if __name__ == "__main__":
     unittest.main()

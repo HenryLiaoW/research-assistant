@@ -91,6 +91,8 @@ def execute_tool_calls(tool_calls, messages: list) -> list:
 
         t0 = time.perf_counter()
         result = run_tool(name, args_json)  # 永远返回带 ok 字段的 dict，不抛异常
+                                            # args_json 是 str（比如'{"numbers": [0.62, 0.58, 0.65]}'），
+                                            # run_tool 内部会 json.loads() 解析成 dict
         ms = (time.perf_counter() - t0) * 1000
 
         if result.get("ok"):

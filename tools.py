@@ -14,6 +14,7 @@ import math
 import statistics
 
 import config
+import csv_tools
 import memory
 
 # ---- 菜单：发给模型的工具定义（OpenAI 兼容格式）----
@@ -90,6 +91,51 @@ TOOLS = [
             },
         },
     },
+        {
+        "type": "function",
+        "function": {
+            "name": "list_experiment_files",
+            "description": "列出实验数据目录里有哪些 CSV 文件（文件名和大小）。不确定有哪些文件时先调用。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_experiment_file",
+            "description": (
+                "查看一个实验 CSV 文件的表头：总行数，以及每列的名字、类型、是否数值列、缺失数、不同取值个数。"
+                "不返回原始数据。调用 group_statistics 之前用它确认列名。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string", "description": "文件名，必须来自 list_experiment_files 的结果，如 sample_results.csv"}
+                },
+                "required": ["file"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "group_statistics",
+            "description": (
+                "对实验 CSV 文件里的一个数值列做描述统计，可按另一列分组。"
+                "每组返回 count（有效值个数）、missing（缺失个数）、mean、min、max、population_std（总体标准差）。"
+                "只返回汇总，不返回原始行。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string", "description": "文件名，必须来自 list_experiment_files 的结果"},
+                    "value_column": {"type": "string", "description": "要统计的数值列名，必须来自 describe_experiment_file 的结果"},
+                    "group_by": {"type": "string", "description": "按哪一列分组；不分组时省略"},
+                },
+                "required": ["file", "value_column"],
+            },
+        },
+    },
 ]
 
 
@@ -143,12 +189,35 @@ def forget_memory(memory_id) -> dict:
     return memory.forget(_memory_conn, memory_id)
 
 
+
+# ---- 受限 CSV 工具（阶段 3）：薄薄一层，把 csv_tools.py 的函数包成工具 ----
+# 模型只给文件名和列名；目录和上限由这里从 config 补上，模型无法指定读哪个目录。
+def list_experiment_files() -> dict:
+    """列出数据目录里的 CSV。谁调用：run_tool()。没有参数。"""
+    return csv_tools.list_files(config.DATA_DIR)
+
+
+def describe_experiment_file(file) -> dict:
+    """看表头。谁调用：run_tool()。输入：文件名。"""
+    return csv_tools.describe_file(config.DATA_DIR, file, config.MAX_CSV_ROWS)
+
+
+def group_statistics(file, value_column, group_by=None) -> dict:
+    """分组统计。谁调用：run_tool()。输入：文件名、值列、可选的分组列。"""
+    return csv_tools.group_stats(config.DATA_DIR, file, value_column, group_by,
+                                 config.MAX_CSV_ROWS, config.MAX_GROUPS)
+
+
+
 # 工具名 → 实现函数。模型给的名字只在这张表里查，不会凭名字去执行任意代码。
 TOOL_IMPLEMENTATIONS = {
     "calculate_stats": calculate_stats,
     "save_memory": save_memory,
     "search_memory": search_memory,
     "forget_memory": forget_memory,
+    "list_experiment_files": list_experiment_files,
+    "describe_experiment_file": describe_experiment_file,
+    "group_statistics": group_statistics,
 }
 
 
@@ -158,17 +227,19 @@ def run_tool(name: str, arguments_json: str) -> dict:
     谁调用：agent.execute_tool_calls()。
     输入：模型给的工具名和参数 JSON 字符串。输出：带 ok 字段的 dict，任何失败都不抛异常。
     """
-    impl = TOOL_IMPLEMENTATIONS.get(name)
+    impl = TOOL_IMPLEMENTATIONS.get(name) # for example, "calculate_stats" -> calculate_stats()
     if impl is None:
         return {"ok": False, "error": f"未知工具：{name}"}
     try:
+        # 之前可能：arguments_json = '{"numbers": [0.62, 0.58, 0.65]}'
+        # 之后（dict）：args = {"numbers": [0.62, 0.58, 0.65]}  
         args = json.loads(arguments_json)
     except json.JSONDecodeError as e:
         return {"ok": False, "error": f"参数不是合法 JSON：{e}"}
     if not isinstance(args, dict):
         return {"ok": False, "error": "参数必须是 JSON 对象（键值对）"}
     try:
-        return impl(**args)
+        return impl(**args) # impl(**args) 就等于 calculate_stats(numbers=[0.62, 0.58, 0.65])
     except TypeError as e:  # 缺少必填参数，或多了不认识的参数
         return {"ok": False, "error": f"参数不匹配：{e}"}
     except Exception as e:  # 工具内部的意外错误也不能让整个程序崩溃

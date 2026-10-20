@@ -76,3 +76,56 @@ token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631�
 - Q setUp/tearDown 为什么每个测试建临时库？A：共用一个库时测试结果取决于运行顺序，时好时坏。
 - Q forget 改成真 DELETE，软删测试哪个断言失败？A：只有直接查表那个（fetchone 返回 None）；search/list_all 仍为空。测试要测设计决定，不只测表面行为。
 - Q 注入测试靠什么通过？A：INSERT 用 ? 占位符，content 作为值传入；改成 f-string 拼接，表会被 DROP，search 报 no such table。
+
+## 阶段 3 —— 受限 CSV 统计工具（2026-10-20 跑通）
+
+已完成：① 样例数据 ② csv_tools.py ⑤ 离线测试 ③ config ④ tools.py 接入 ⑥ 真机验证。
+
+真机验收（⑥，eval/cases.md 3.1–3.9 全部通过）：53 个离线测试 OK；"我的实验里 survival_sup 的 ARI"不再误走 search_memory，按 list → describe → group_statistics 答 0.551；c_index 回答明确写出 survival_sup 基于 9 个有效值、1 个缺失；文字列求均值、读 ../.env 均被拒且无泄露；calculate_stats 回归正常。首轮 prompt 1355 tokens（阶段 2 末为 909，多出的是三个新工具菜单和规则 9）。
+
+真机观察：
+- 3.6 / 3.7 / 3.9 模型都在调用工具之前自己拒绝，代码防线未被触发。模型的拒绝靠判断，不能当安全保证；兜底的是代码，已由 run_tool 链路上的测试覆盖。
+- 3.1 里模型填 group_by="config" 是推断出来的：describe 只给文字列有几种取值，没给是哪几种。猜对了；猜错也只会多一轮，数字不会错。可改进：对取值很少的文字列顺带返回取值。
+- 学习用的简化（以后要改）：只支持单列分组；describe 不返回文字列取值；DATA_DIR 是相对路径，要求在项目目录里运行；data/ 里的替身会被 list_files 列出（读取时仍被拦）。
+
+验收记录（① ② ⑤）：
+- data/sample_results.csv：合成数据，3 种配置 × 10 个种子 = 30 行，列 config/seed/ari/c_index；survival_sup 第 8 个种子的 c_index 故意留空。pandas 3.0.6 读出 (30, 4)，config 为 str、其余为数值；ari 均值 0.423 / 0.551 / 0.583；c_index 计数 10 / 9 / 10。
+- requirements.txt 加 pandas>=3.0,<4（下限：代码在 3.0 上验证；上限：主版本变化允许不兼容改动）。
+- csv_tools.py：19 个新测试 OK，全部 48 个 OK。group_stats 返回 survival_sup 的 c_index 为 count 9 / missing 1；config 作为值列被拒并列出可用数值列；"../.env" 被拒且内容不出现。
+
+1. 这轮加了什么：csv_tools.py，三个对外函数 list_files / describe_file / group_stats，内部 _resolve（路径白名单）和 _load（读表 + 行数上限 + 解析失败）。只返回汇总，不返回原始行。不 import config，目录和上限都作为参数传入，测试可以喂临时目录和很小的上限。
+2. 为什么这样设计：
+   - 和 calculate_stats 的区别是数据来源：以前数字由模型抄进参数，现在模型只给文件名和列名（数据的地址），程序自己读文件，原始数据不经过模型。
+   - 判断由代码做、转述由模型做："config 不是数值列"是 is_numeric_dtype 判断出来的，模型只是读到 ok=false 后转述。
+   - pandas 的 mean/count/groupby 会悄悄跳过空值，所以每组必须返回 count（实际参与计算）和 missing（被跳过），模型才不会把 9 个种子说成 10 个，也不用自己做减法。分组列为空的行用 dropna=False 单独成组。
+   - 结果要被 agent.py json.dumps 发给模型，numpy 的 int64 不能序列化，所以组名 str()、数值 int()/float()。
+3. 路径白名单（_resolve）五道关：
+   - 上半段只看文字，不碰磁盘：第 0 道非空字符串；第 1 道不许有 / \ 和 ..；第 2 道必须 .csv 结尾。
+   - 下半段看磁盘：第 3 道 resolve() 后的真实上级目录必须等于 data；第 4 道文件必须存在，不存在时列出可用文件。
+   - resolve() 是 pathlib.Path 的方法：相对路径变绝对、去掉 . 和 ..、顺着符号链接找到真身；文件不存在也照样返回绝对路径，不负责检查存在。
+   - 第 3 道对普通文件必然通过（base / filename 的上级就是 base），只有 resolve 后"跳走"的替身才会触发。实测：data/link.csv 指向 data 外的 secret.csv，名字通过前三道，被第 3 道拦下。
+   - base 和 path 两边都要 resolve：比较的是文字，一边是 "data" 一边是完整地址就永远不相等；Mac 上 /var 实为 /private/var，也说明了这一点。
+   - 错误信息只写模型给的文件名，不写替身的真实指向，避免泄露 data 以外的路径。
+
+4. _load（我的总结）：_load 调用 _resolve 并使用它的结果——先判断白名单是否通过，再判断能否成功读取（空文件、格式错乱、不是文本这三种解析异常被接住），再判断是否超过行数上限，全部通过才返回能用的 DataFrame。任何一步失败都返回 (None, 错误)，_resolve 的错误原样往上传。保证 read_csv 拿到的永远是过了五道关的路径。
+
+   - 行数上限：nrows=max_rows+1 搭配 len(df) > max_rows，多读的那一行用来揭露是否超限。nrows 只是读够 N 行就停、不报错；若写成 nrows=max_rows，超大文件会被截成前 N 行悄悄放行，统计结果错却没有提示。
+5. list_files / describe_file：list_files 找出 data 里所有 csv，列出名字和大小；不读内容、不接收模型给的文件名，所以不需要走 _resolve（data 里的替身会被列出，但读取时仍会被拦）。describe_file 走 _load，逐列给出概况：name、dtype、numeric、missing、unique（nunique，几种不同取值，不含空值）。unique 只能帮模型排除明显不适合分组的列，选哪列主要靠列名和用户的问题；选错分组列的后果是答非所问，数仍然算得对。
+6. group_stats（我的总结）：
+   - value_column 是"算谁"（必须是数值列），group_by 是"按什么分组"（可以是文字列，可以不填）。value_column 本身是列名字符串，df[value_column] 才是那一列的数据——第一道查名字存在，第二道查内容是数值。先查存在再取列，顺序不能反。
+   - group_by 为 None、"" 或全空格都当作不分组：先 isinstance 再 .strip()，靠 and/or 短路防止对 None 或数字调用 strip。分组时再查三道：列存在、不能和值列相同、组数不超 max_groups。
+   - 不分组得到 [("全部", 整列)]，分组得到 [(组名, part[value_column]), ...]，两条路形状一样，后面统一计算。part 是某组的小表，part[value_column] 只取要算的那一列。
+   - dropna=False：分组列为空的行单独成"(缺失)"组。默认会悄悄丢掉这些行，总数对不上、数据问题被藏起来，可能丢掉的恰好是最重要的一行。
+   - 逐组：从 groups 取 label 和 values，values.dropna() 得到 valid；count 用 valid、missing 用 values；全空组四个统计量填 None 不填 0；std 用 ddof=0（总体标准差，和 calculate_stats 一致，pandas 默认是 ddof=1）。最后连同文件、列、分组、std 定义一起返回。
+   - 组名不 str() 的后果：按 seed 分组时组名是 numpy.int64，csv_tools 本身不报错，但 agent.py 里 json.dumps 抛 TypeError，发生在 run_tool 的保护之外，chat.py 只接 OpenAIError，整个程序崩溃；且只在按数值列分组时出现。
+7. config.py（③）：加 DATA_DIR / MAX_CSV_ROWS / MAX_GROUPS；改规则 1（只管用户在对话里直接给出的数字）、规则 7（实验表格数据不算个人事实，按规则 9 处理）；加规则 9（先 list / describe 再 group_statistics，文件名和列名必须来自工具结果，回答说明有效值和缺失数）。教训：每加一个工具，都要回头检查旧规则会不会把模型带偏——规则 1、7 当初故意写得很强硬，现在会误伤新工具。
+8. tools.py 接入（④）：目的是把模型和 csv_tools.py 接通。菜单让模型知道有这个工具，登记表让 run_tool 找得到函数，包装函数把调用转给 csv_tools 并补上 config，import 让 tools.py 能用 csv_tools。
+   - 为什么要包装函数，不直接登记 csv_tools.list_files：不是为了统一格式，而是 csv_tools 的函数需要 data_dir、max_rows、max_groups，这些由 config 决定，不能让模型给。直接登记的话，模型不传就报错，让模型传就失去安全。包装函数的参数列表，就是模型能控制的全部范围（phase 2 的 search_memory(keyword) 同理）。
+   - 和路径白名单的关系：_resolve 里"文件真实位置必须就在允许的目录 base 里"这项检查，base 是由 data_dir 算出来的。如果模型能传 data_dir="/Users/henry/Downloads"、file="bank_statement.csv"，_resolve 的每一项检查都会通过——不是检查写错了，而是"允许的目录"本身被换掉了。安全靠两层：_resolve 检查文件在不在圈里，包装函数保证圈只能由 config 画。
+   - 两层都挡：菜单里不写 data_dir，模型不知道；就算硬塞进来，包装函数参数列表不接收，impl(**args) 报 TypeError，被 run_tool 接住返回 ok=false。原函数没被禁掉，包装函数内部照样调用它，只是模型唯一能进的门是包装函数。
+练习结果：
+- Q 只返回 mean=0.711，模型说"10 个种子平均 0.711"错在哪？A（我的）：没发现有缺失值，工具应多返回缺失数量。补充：错在样本量描述，应同时返回 count 和 missing，让模型不用自己做减法。
+- Q 模型要求算 config 列的均值，工具怎么回应？A：第一次答成"按 config 分组算"，混淆了 group_by 和 value_column。正确：config 是文字列，返回 ok=false，说明原因并列出可用数值列。
+- Q 不改规则 7，问"我的实验里 survival_sup 的 ARI 是多少"会怎样？A：命中"我的……"句式，模型调 search_memory，查不到就按规则 7 说"没有记录"，而数据明明在 CSV 里；若记忆里恰好有含 ARI 的旧记录，还会被拿来答非所问。
+- Q 规则 9 为什么强调文件名和列名必须来自工具结果？A：数字准不准由代码保证，猜错列名（ari 写成 ARI，区分大小写）只会被拒。规则 9 防的是模型瞎试：多一轮调用、浪费 token、可能撞上 MAX_TOOL_ROUNDS、被拒几次后放弃并说"没有这个数据"。代码负责"错了也不会出错的数"，提示词负责"尽量一次做对"。
+- Q link.csv 过了哪几道、被哪一行拦？A：第 0、1、2 道都过，被第 3 道 if path.parent != base 拦下。
