@@ -16,3 +16,7 @@ logs/
 # macOS
 .DS_Store
 AGENTS.md
+
+docs/*
+!docs/sample_protocol.pdf
+index/
