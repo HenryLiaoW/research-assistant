@@ -161,3 +161,102 @@ def summarize(parsed: dict) -> dict:
         "numbered_headings": numbered,
         "labels": labelled,
     }
+
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")   # . ! ? 之后、空格之后紧跟大写字母处切句
+
+
+def _join_lines(texts: list) -> str:
+    """把几行拼成一段：行尾是连字符且下一行小写开头时直接相连（"log-" + "rank"），其余用空格。"""
+    out = ""
+    for text in texts:
+        if out.endswith("-") and text[:1].islower():
+            out += text
+        else:
+            out = f"{out} {text}" if out else text
+    return out
+
+
+def page_sentences(texts: list) -> list:
+    """一页的行文字 → 句子列表（第 4b 步）。句子切错只影响 chunk 边界，不丢内容。"""
+    return [s for s in _SENTENCE_BREAK.split(_join_lines(texts)) if s.strip()]
+
+def _split_long(sentence: str, size: int) -> list:
+    """比 size 还长的"句子"（常见于表格，没有句号）按空格切成不超过 size 的几段；没有空格就硬切。"""
+    pieces = []
+    while len(sentence) > size:
+        cut = sentence.rfind(" ", 0, size + 1)
+        if cut <= 0:
+            cut = size
+        pieces.append(sentence[:cut].strip())
+        sentence = sentence[cut:].strip()
+    if sentence:
+        pieces.append(sentence)
+    return pieces
+
+def pack_sentences(sentences: list, size: int, overlap: int) -> list:
+    """句子列表 → chunk 文字列表（第 4b 步）。每块不超过 size 字符，相邻块重叠不超过 overlap 字符（只取整句）。"""
+    # 0. 参数检查：不满足 size > 0 且 0 <= overlap < size，就 raise ValueError
+    if not (size > 0 and 0 <= overlap < size):
+        raise ValueError("参数不合法：size 必须大于 0，overlap 必须在 [0, size) 范围内")
+    # 1. 先用 _split_long 把每个句子展开（超长的切成几段）
+    pieces = [] # 字符串列表
+    for sentence in sentences:
+        if len(sentence) > size:
+            pieces.extend(_split_long(sentence, size))
+        else:
+            pieces.extend([sentence])
+    # 2. 逐句往 current（当前 chunk 的句子列表）里装；装不下时：
+    def length(parts):                      # 一组句子用空格拼起来后的总长度
+        return len(" ".join(parts))
+
+    chunks = []
+    current = []
+    for piece in pieces:
+        if current and length(current + [piece]) > size:   # 加上这句就装不下了
+            chunks.append(" ".join(current))        # a. 把 current 拼成字符串，封口
+            tail = []
+            for t in reversed(current):                    # b. 从末尾往前取整句
+                if length([t] + tail) > overlap:
+                    break
+                tail.insert(0, t)                                     #    把 t 放到 tail 的最前面
+            current = tail if length(tail+[piece]) <= size else []               # c. 重叠 + 这一句装得下吗？
+        current.append(piece)                              # 不管哪种情况，最后都把这句装进 current
+    # 3. 循环结束后，current 里还有句子的话，也封口放进 chunks
+    chunks.extend([" ".join(current)] if current else [])
+    return chunks    
+
+
+def chunk_document(parsed: dict, size: int = 500, overlap: int = 100) -> list:
+    """把 parse_pdf 的结果切成带出处的 chunk。每页单独切，遇到标题就开始新的一段。"""
+    chunks = []
+    section = None                                  # 放在页循环外面：章节名会延续到下一页
+    for page in parsed["pages"]:
+        # ① 按标题把这一页的行分段：[(章节名, [行文字...]), ...]
+        segments = []
+        texts = []
+        for line in page["lines"]:
+            if line["heading"]:
+                if texts:                           # 先把旧段存起来（用的是旧的 section）
+                    segments.append((section, texts))
+                section = line["text"]              # 再更新章节名
+                texts = [line["text"]]              # 新段从标题这一行开始
+            else:
+                texts.append(line["text"])
+        if texts:                                   # 页末剩下的部分也要存
+            segments.append((section, texts))
+
+        # ② 每段切成句子再装进 chunk；③ 给每个 chunk 加上出处
+        i = 0                                       # 每页的序号从 0 开始
+        for sec, seg_texts in segments:
+            for text in pack_sentences(page_sentences(seg_texts), size, overlap):
+                chunks.append({
+                    "chunk_id": f"{parsed['file']}#p{page['page']}#{i}",
+                    "file": parsed["file"],
+                    "page": page["page"],
+                    "label": page["label"],
+                    "section": sec,
+                    "text": text,
+                })
+                i += 1
+    return chunks
