@@ -44,6 +44,11 @@ MAX_GROUPS = 20            # 分组统计最多多少组，防止把几千组塞
 # ---- 资料检索（阶段 4）----
 DOCS_DIR = "docs"          # 资料 PDF 所在目录；除合成样例外不进 git
 
+INDEX_DIR = "index"        # 索引目录（chunk 原文 + 向量），不进 git；用 python build_index.py 重建
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"   # 本地嵌入模型；small 版把 large 换成 small。换模型后必须重建索引
+CHUNK_SIZE = 500           # 每个 chunk 最多多少字符
+CHUNK_OVERLAP = 100        # 相邻 chunk 最多重叠多少字符（只取完整的句子）
+
 # ---- 提示词 ----
 SYSTEM_PROMPT = "你是一个研究助手。回答简洁、直接；不知道的就说不知道。"
 
