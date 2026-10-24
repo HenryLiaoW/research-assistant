@@ -59,6 +59,21 @@ def trim_history(history: list, max_turns: int) -> list:
     return [history[0]] + history[cut:]
 
 
+def rollback_last_turn(history: list) -> None:
+    """API 出错时调用：删掉最后一条 user 消息和它后面的所有消息，让历史回到这次提问之前。谁调用：chat.py。
+
+    按"最后一条 user 消息的位置"来删，而不是按调用前记下的长度：run_agent 开头可能已经就地裁剪了历史，
+    裁剪后旧长度就对不上了，会删错范围，留下没有结果的工具请求（下一轮请求会因协议不完整报 400）。
+    注意：这只恢复对话历史；这一轮里已经执行的写操作（比如 save_memory）不会被撤销。
+    """
+    last_user = None
+    for i, m in enumerate(history):          # 从前往后看，每遇到一条 user 消息就记下它的位置
+        if m["role"] == "user":
+            last_user = i                    # 循环结束时，last_user 就是最后一条 user 消息的位置
+    if last_user is not None:                # 一条 user 消息都没有时什么也不删
+        del history[last_user:]
+
+
 def call_model(client: OpenAI, messages: list):
     """一次模型调用，带上工具菜单。谁调用：run_agent()。
 

@@ -23,7 +23,7 @@ from openai import OpenAIError
 
 import config
 import memory
-from agent import log, new_history, run_agent
+from agent import log, new_history, rollback_last_turn, run_agent
 from llm_client import build_client, describe_api_error, load_api_key
 
 
@@ -66,13 +66,12 @@ def main() -> None:
             continue
 
         history.append({"role": "user", "content": text})
-        before = len(history)
         t0 = time.perf_counter()
         try:
             result = run_agent(client, history)
         except OpenAIError as e:
             # 这一轮失败：把刚追加的 user 消息和半截产物都撤掉，历史恢复到提问前，下一轮才不会带着残缺协议再报错
-            del history[before - 1:]
+            rollback_last_turn(history)
             print(describe_api_error(e))
             continue
 

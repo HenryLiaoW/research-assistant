@@ -2,7 +2,7 @@
 
 import unittest
 
-from agent import new_history, trim_history
+from agent import new_history, rollback_last_turn, trim_history
 
 SYSTEM = {"role": "system", "content": "s"}
 
@@ -50,6 +50,27 @@ class TrimHistoryTest(unittest.TestCase):
         h = new_history()
         self.assertEqual(len(h), 1)
         self.assertEqual(h[0]["role"], "system")
+
+
+class RollbackTest(unittest.TestCase):
+    def test_rollback_after_trimming_leaves_complete_turns(self):
+        # 复现 bug：已有 10 个回合，第 11 问触发裁剪，工具执行后下一次模型调用出错
+        complete = [SYSTEM] + sum((turn(i) for i in range(1, 11)), [])
+        h = complete + [{"role": "user", "content": "q11"}]          # 旧代码在这里记下 before = 22
+        h[:] = trim_history(h, 10)                                     # run_agent 就地裁剪，删掉了第 1 回合
+        h += turn(11, with_tool=True)[1:3]                             # 追加了工具请求和工具结果，然后 API 出错
+        rollback_last_turn(h)
+        self.assertEqual(h, [SYSTEM] + sum((turn(i) for i in range(2, 11)), []))   # 只剩完整的回合
+
+    def test_rollback_without_trimming(self):
+        h = [SYSTEM] + turn(1) + [{"role": "user", "content": "q2"}]
+        rollback_last_turn(h)
+        self.assertEqual(h, [SYSTEM] + turn(1))
+
+    def test_no_dangling_tool_call_after_rollback(self):
+        h = [SYSTEM] + turn(1, with_tool=True) + turn(2, with_tool=True)[:2]   # 第 2 回合只有 user 和工具请求
+        rollback_last_turn(h)
+        self.assertEqual(h, [SYSTEM] + turn(1, with_tool=True))
 
 
 if __name__ == "__main__":
