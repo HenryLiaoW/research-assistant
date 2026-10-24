@@ -47,7 +47,7 @@ def save_index(index_dir, chunks: list, vectors: np.ndarray, info: dict) -> dict
     return manifest
 
 
-def load_index(index_dir) -> tuple:
+def load_index(index_dir) -> tuple: # 加载索引
     """读回 (chunks, vectors, manifest)。索引不存在或数量对不上时报错，提示重建。"""
     d = Path(index_dir)
     if not (d / "manifest.json").exists():
@@ -59,3 +59,29 @@ def load_index(index_dir) -> tuple:
     if len(chunks) != len(vectors):
         raise ValueError(f"索引损坏：chunk 数（{len(chunks)}）和向量数（{len(vectors)}）不一致，请重建")
     return chunks, vectors, manifest
+
+
+class DocumentSearch:
+    """检索：读入本地索引，把问题转成向量，返回最相近的 k 个 chunk（带出处和相似度）。
+    建一次、查多次：索引只在创建时读一次，之后每次 search 只需要把问题转成向量。"""
+
+    def __init__(self, index_dir, embedder):
+        chunks, vectors, manifest = load_index(index_dir)
+        if manifest.get("model") != embedder.model_name:     # 问题和原文必须用同一个模型转成向量
+            raise ValueError(f"索引是用 {manifest.get('model')} 建的，当前模型是 {embedder.model_name}；"
+                             f"两者必须一致，请重新运行 python build_index.py")
+        self.chunks = chunks          # 第 i 个 chunk ……
+        self.vectors = vectors        # …… 对应第 i 行向量，形状 (chunk 数, 向量长度)
+        self.manifest = manifest
+        self.embedder = embedder
+
+    def search(self, query: str, k: int = 3) -> list:
+        """返回最相近的 k 个 chunk，从高到低；每个是 chunk 字典的副本，多一个 "score"（余弦相似度）。"""
+        q = self.embedder.embed_query(query)
+        scores = self.vectors @ q
+        results = []
+        top = np.argsort(-scores)[:k]
+        for i in top:
+            results.append({**self.chunks[i], "score": round(float(scores[i]), 4)})
+
+        return results
