@@ -20,3 +20,6 @@ AGENTS.md
 docs/*
 !docs/sample_protocol.pdf
 index/
+
+# 本地评估结果（检索到的页码、章节名和分数；不进 git）
+eval/local/
