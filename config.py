@@ -48,6 +48,11 @@ INDEX_DIR = "index"        # 索引目录（chunk 原文 + 向量），不进 gi
 EMBEDDING_MODEL = "intfloat/multilingual-e5-large"   # 本地嵌入模型；small 版把 large 换成 small。换模型后必须重建索引
 CHUNK_SIZE = 500           # 每个 chunk 最多多少字符
 CHUNK_OVERLAP = 100        # 相邻 chunk 最多重叠多少字符（只取完整的句子）
+# 建索引时跳过的章节（按章节名整名匹配，不区分大小写）：封面信息、声明、目录、图表清单、参考文献。
+# 它们和正文用词很像，会挤占检索名额；提交表里还有姓名和学号。摘要保留（它常是正确答案）。
+# 改动后必须重建索引；设为 () 即不跳过（用于复现基线）。
+SKIP_SECTIONS = ("Project Submission Pro-Forma", "Declaration", "Acknowledgements", "Table of Contents", "Contents",
+                 "List of tables", "List of figures", "List of abbreviations", "References", "Bibliography")
 
 # ---- 提示词 ----
 SYSTEM_PROMPT = "你是一个研究助手。回答简洁、直接；不知道的就说不知道。"

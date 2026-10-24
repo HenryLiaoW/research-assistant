@@ -260,3 +260,14 @@ def chunk_document(parsed: dict, size: int = 500, overlap: int = 100) -> list:
                 })
                 i += 1
     return chunks
+
+
+def drop_sections(chunks: list, names) -> list:
+    """去掉属于指定章节的 chunk。章节名整名匹配，忽略大小写和首尾空格；没有章节（None）的 chunk 保留。"""
+    skip = {name.strip().lower() for name in names}
+    kept = []
+    for chunk in chunks:
+        section = chunk["section"]
+        if section is None or section.strip().lower() not in skip:   # 没有章节名，或者不在名单里
+            kept.append(chunk)
+    return kept

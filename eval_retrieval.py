@@ -73,6 +73,9 @@ def main() -> None:
     questions = json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
     print(f"加载嵌入模型 {config.EMBEDDING_MODEL} 和索引 {config.INDEX_DIR}/ ……")
     searcher = retrieval.DocumentSearch(config.INDEX_DIR, retrieval.Embedder(config.EMBEDDING_MODEL))
+    m = searcher.manifest
+    print(f"索引：{m['chunks']} 个 chunk，chunk {m.get('chunk_size')} 字 / 重叠 {m.get('chunk_overlap')}，"
+          f"跳过章节 {m.get('skip_sections') or '无'}")
     rows, summary = evaluate(questions, searcher, args.k)
 
     for r in rows:

@@ -67,9 +67,9 @@ class BuildTest(unittest.TestCase):
         make_pdf(self.dir / "b.pdf", "Gamma three.")
         (self.dir / "bad.pdf").write_bytes(b"not a pdf")
         embedder = FakeEmbedder()
-        chunks, vectors, skipped = build_index.build(
+        chunks, vectors, failed = build_index.build(
             [self.dir / "a.pdf", self.dir / "bad.pdf", self.dir / "b.pdf"], embedder, 500, 100)
         self.assertEqual([c["chunk_id"] for c in chunks], ["a.pdf#p1#0", "b.pdf#p1#0"])
         self.assertEqual(embedder.received, ["Alpha one. Beta two.", "Gamma three."])
         self.assertEqual(vectors.shape, (2, 2))
-        self.assertEqual([name for name, _ in skipped], ["bad.pdf"])
+        self.assertEqual([name for name, _ in failed], ["bad.pdf"])

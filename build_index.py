@@ -47,26 +47,25 @@ def print_report(parsed: dict) -> None:
 
 
 
-# 这个函数要做的就是输入path列表（files）、embbedr、size、overlap，输出chunks、vectors、skipped
-def build(files: list, embedder, size: int, overlap: int) -> tuple:
-    """解析 → 分块 → 向量化。返回 (chunks, vectors, skipped)，skipped 是 [(文件名, 错误原因), ...]。"""
-    chunks, skipped = [], []
+# 这个函数要做的就是输入path列表（files）、embedder、size、overlap、skip_sections，输出chunks、vectors、failed
+def build(files: list, embedder, size: int, overlap: int, skip_sections=()) -> tuple:
+    """解析 → 分块 → 向量化。返回 (chunks, vectors, failed)，failed 是解析失败的文件 [(文件名, 错误原因), ...]。"""
+    chunks, failed = [], []
     for path in files:
         
-        # TODO 1: 用 documents.parse_pdf 解析 path
         parsed = documents.parse_pdf(path) #拆成一行行的
         
-        # TODO 2: 如果解析失败（"ok" 是 False），把 (path.name, 错误原因) 加进 skipped，跳过这个文件
         if not parsed["ok"]:
-            skipped.append((path.name, parsed["error"]))
+            failed.append((path.name, parsed["error"]))
             continue
-        chunks.extend(documents.chunk_document(parsed, size, overlap))
+        # 切完chunk后，丢掉 skip_sections 里指定的章节
+        chunks.extend(documents.drop_sections(documents.chunk_document(parsed, size, overlap), skip_sections))
    
     texts=[]
     for chunk in chunks:
         texts.append(chunk["text"])
     vectors = embedder.embed_passages(texts)
-    return chunks, vectors, skipped
+    return chunks, vectors, failed
 
 
 def main() -> None:
@@ -98,14 +97,16 @@ def main() -> None:
 def build_and_save(files: list) -> None:
     print(f"加载嵌入模型 {config.EMBEDDING_MODEL}（只在本机运行；第一次使用会下载模型文件）")
     embedder = retrieval.Embedder(config.EMBEDDING_MODEL) # 告诉模型，用定义在config里的large模型
-    chunks, vectors, skipped = build(files, embedder, config.CHUNK_SIZE, config.CHUNK_OVERLAP)
-    for name, error in skipped:
+    chunks, vectors, failed = build(files, embedder, config.CHUNK_SIZE, config.CHUNK_OVERLAP,
+                                     config.SKIP_SECTIONS)
+    for name, error in failed:
         print(f"[跳过] {name}：{error}")
     if not chunks:
         print("没有可用的 chunk，未建索引")
         return
     info = {"model": config.EMBEDDING_MODEL, "chunk_size": config.CHUNK_SIZE,
-            "chunk_overlap": config.CHUNK_OVERLAP, "files": sorted({c["file"] for c in chunks})}
+            "chunk_overlap": config.CHUNK_OVERLAP, "skip_sections": list(config.SKIP_SECTIONS),
+            "files": sorted({c["file"] for c in chunks})}
     manifest = retrieval.save_index(config.INDEX_DIR, chunks, vectors, info)
     print(f"索引已写入 {config.INDEX_DIR}/：{manifest['chunks']} 个 chunk，向量长度 {manifest['dim']}，"
           f"文件 {', '.join(manifest['files'])}")
