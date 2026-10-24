@@ -60,10 +60,8 @@ def build(files: list, embedder, size: int, overlap: int) -> tuple:
         if not parsed["ok"]:
             skipped.append((path.name, parsed["error"]))
             continue
-        # TODO 3: 否则用 documents.chunk_document 分块，把结果加进 chunks（想想用 append 还是 extend）
         chunks.extend(documents.chunk_document(parsed, size, overlap))
-        pass
-    # TODO 4: 把所有 chunk 的 text 组成列表，交给 embedder.embed_passages，得到 vectors
+   
     texts=[]
     for chunk in chunks:
         texts.append(chunk["text"])
