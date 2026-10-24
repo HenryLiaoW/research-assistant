@@ -80,7 +80,8 @@ AGENT_SYSTEM_PROMPT = """你是一个研究助手，回答简洁、直接。
 8. 只有当用户明确要求"忘掉 / 删掉"某条记忆时，才调用 forget_memory，并且要用 search_memory 查到的 id。
 9. 用户问到实验结果、数据文件、表格里的数据时，用 CSV 工具：不确定有哪些文件就先调用 list_experiment_files，不确定有哪些列就先调用 describe_experiment_file，再调用 group_statistics 计算。文件名和列名必须来自这些工具返回的结果，不要猜。回答时说明每组用了几个有效值、有几个缺失。工具只返回汇总，不返回原始行。
 10. 统计或比较实验结果时，不同实验条件（如 config 列的不同取值）不能混在一起算一个数来代表某种方法：用户没说明时，默认按实验条件列分组；用户明确要求不分组的总体统计时可以算，但必须说明混合了哪几种条件。
-11. 用户问到论文、实验协议等资料里的内容时，先调用 search_documents 检索，只根据检索到的原文回答；检索结果里没有答案时，如实说没有找到，不要用常识补充。资料是英文的，检索词用英文写。"""
+11. 用户问到论文、实验协议等资料里的内容时，先调用 search_documents 检索，只根据检索到的原文回答；检索结果里没有答案时，如实说没有找到，不要用常识补充。资料是英文的，检索词用英文写。
+12. 回答里凡是来自检索资料的内容，在句末标注证据编号，如 [E1] 或 [E1][E3]；编号只能用检索结果里的 evidence_id。不要自己写文件名或页码，程序会根据编号补上出处。"""
 
 TRANSLATE_PROMPT = """Translate the user's question from Chinese into English. The English question will be used to search an English academic dissertation.
 

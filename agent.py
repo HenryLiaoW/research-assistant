@@ -15,10 +15,11 @@ agent.py — Agent 循环本体（阶段 1 建立，阶段 2 改为可处理多�
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openai import OpenAI, OpenAIError
 
+import citations
 import config
 from llm_client import build_client, describe_api_error, load_api_key
 from tools import TOOLS, run_tool
@@ -32,6 +33,9 @@ class AgentResult:
     answer: str
     model_calls: int     # 这条请求一共调用了几次模型
     tool_calls: int      # 一共执行了几次工具
+    citations: list = field(default_factory=list)           # 回答里有效的证据编号（来自检索结果）
+    invalid_citations: list = field(default_factory=list)   # 回答里出现、但不在检索结果中的编号
+    uncited: bool = False  # 这次请求检索了资料，回答却没有标注任何证据编号
 
 
 def log(tag: str, text: str) -> None:
@@ -109,6 +113,8 @@ def execute_tool_calls(tool_calls, messages: list) -> list:
                                             # args_json 是 str（比如'{"numbers": [0.62, 0.58, 0.65]}'），
                                             # run_tool 内部会 json.loads() 解析成 dict
         ms = (time.perf_counter() - t0) * 1000
+        if name == "search_documents" and result.get("ok"):
+            citations.assign_ids(result["results"], messages)   # 程序给每个片段编号 E1、E2……，模型只引用编号
 
         if result.get("ok"):
             log("tool", f"{name} 成功（{ms:.1f} ms）：{json.dumps(result, ensure_ascii=False)}")
@@ -144,6 +150,7 @@ def run_agent(client: OpenAI, history: list) -> AgentResult:
     started = time.perf_counter()
     tool_call_count = 0
     last_tool_results: list = []
+    searched = False                         # 这次请求有没有检索过资料（用来判断回答是否漏了引用）
 
     for round_no in range(1, config.MAX_TOOL_ROUNDS + 1):
         elapsed = time.perf_counter() - started
@@ -187,15 +194,17 @@ def run_agent(client: OpenAI, history: list) -> AgentResult:
                 ],
             })  # 这里 append 的是工具调用请求
             last_tool_results = execute_tool_calls(msg.tool_calls, messages)  # append 工具结果
+            searched = searched or any(tc.function.name == "search_documents" for tc in msg.tool_calls)
             tool_call_count += len(msg.tool_calls)
             continue  # 带着工具结果再问一次模型
 
         answer = msg.content or ""
-        messages.append({"role": "assistant", "content": answer})  # 最终回答进入历史，下一轮可见
-        if choice.finish_reason == "stop":
-            return AgentResult("ok", answer, round_no, tool_call_count)
-        # content_filter / insufficient_system_resource / aborted 等：如实报告，不假装正常
-        return AgentResult(f"unexpected:{choice.finish_reason}", answer, round_no, tool_call_count)
+        messages.append({"role": "assistant", "content": answer})  # 最终回答进入历史，下一轮可见（保留模型原文）
+        shown, valid, invalid = citations.render(answer, citations.collect_evidence(messages))
+        status = "ok" if choice.finish_reason == "stop" else f"unexpected:{choice.finish_reason}"
+        # unexpected：content_filter / insufficient_system_resource / aborted 等，如实报告，不假装正常
+        return AgentResult(status, shown, round_no, tool_call_count, valid, invalid,
+                           uncited=searched and not valid and bool(answer.strip()))
 
     # 轮数用尽：不再调模型，但把最后一轮工具算出的结果原样交给用户（阶段 1 的遗留问题）。
     answer = (

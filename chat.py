@@ -82,6 +82,10 @@ def main() -> None:
                      f"历史 {describe_history(history)}")
         if result.status == "truncated":
             print("[warn] 回答被截断：已达到 MAX_OUTPUT_TOKENS，可在 config.py 中调大。")
+        if result.invalid_citations:
+            print(f"[warn] 回答引用了不存在的证据编号：{'、'.join(result.invalid_citations)}")
+        if result.uncited:
+            print("[warn] 这次检索了资料，但回答没有标注证据编号")
         print(f"\n助手：{result.answer}")
 
 
