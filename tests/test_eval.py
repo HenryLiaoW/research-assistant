@@ -54,4 +54,5 @@ class EvaluateTest(unittest.TestCase):
                                  "B": [hit("other.pdf", 2), hit("d.pdf", 2)]})   # other.pdf 的第 2 页不算
         rows, summary = evaluate(questions, searcher, 3)
         self.assertEqual([r["pages"] for r in rows], [[1, 9], [None, 2]])
+        self.assertGreaterEqual(summary.pop("search_ms_mean"), 0)      # 耗时每次不同，只检查不是负数
         self.assertEqual(summary, {"questions": 2, "full_recall": 1.0, "recall": 1.0, "mrr": 0.75})

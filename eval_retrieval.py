@@ -18,6 +18,7 @@ eval_retrieval.py — 检索评估（阶段 4d）：用 eval/retrieval_questions
 
 import argparse
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,16 +55,20 @@ def evaluate(questions: list, searcher, k: int) -> tuple:
     """每道题检索一次并打分。返回 (每题结果, 总分)。"""
     rows = []
     for q in questions:
+        t0 = time.perf_counter()
         results = searcher.search(q["question"], k)
+        search_ms = (time.perf_counter() - t0) * 1000           # 这道题的检索耗时：问题转向量 + 相似度 + 排序
         pages = [r["page"] if r["file"] == q["file"] else None for r in results]   # 其他文件的结果不算
         rows.append({"id": q["id"], "question": q["question"], "groups": q["groups"], "pages": pages,
                      "sections": [r["section"] for r in results], "scores": [r["score"] for r in results],
+                     "search_ms": round(search_ms, 1),
                      **score_question(pages, q["groups"])})
     n = len(rows)
     summary = {"questions": n,
                "full_recall": sum(r["full"] for r in rows) / n,
                "recall": sum(r["recall"] for r in rows) / n,
-               "mrr": sum(r["rr"] for r in rows) / n}
+               "mrr": sum(r["rr"] for r in rows) / n,
+               "search_ms_mean": round(sum(r["search_ms"] for r in rows) / n, 1)}
     return rows, summary
 
 
@@ -89,7 +94,8 @@ def main() -> None:
     full = sum(r["full"] for r in rows)
     print(f"\n{config.EMBEDDING_MODEL}，k = {args.k}，{summary['questions']} 题："
           f"完整召回@{args.k} {summary['full_recall']:.3f}（{full}/{summary['questions']}）"
-          f"  召回@{args.k} {summary['recall']:.3f}  MRR {summary['mrr']:.3f}")
+          f"  召回@{args.k} {summary['recall']:.3f}  MRR {summary['mrr']:.3f}"
+          f"  平均每题检索 {summary['search_ms_mean']} ms")
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
