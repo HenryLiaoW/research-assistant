@@ -54,6 +54,11 @@ CHUNK_OVERLAP = 100        # 相邻 chunk 最多重叠多少字符（只取完�
 SKIP_SECTIONS = ("Project Submission Pro-Forma", "Declaration", "Acknowledgements", "Table of Contents", "Contents",
                  "List of tables", "List of figures", "List of abbreviations", "References", "Bibliography")
 
+# ---- 评估题翻译（阶段 4d 实验 2：中文问题先翻译成英文再检索）----
+# 会发给 API 的只有提示词和每道题的中文问题，不发送论文内容。翻译要稳定，所以温度为 0。
+TRANSLATE_TEMPERATURE = 0.0
+TRANSLATE_MAX_TOKENS = 200
+
 # ---- 提示词 ----
 SYSTEM_PROMPT = "你是一个研究助手。回答简洁、直接；不知道的就说不知道。"
 
@@ -70,3 +75,11 @@ AGENT_SYSTEM_PROMPT = """你是一个研究助手，回答简洁、直接。
 8. 只有当用户明确要求"忘掉 / 删掉"某条记忆时，才调用 forget_memory，并且要用 search_memory 查到的 id。
 9. 用户问到实验结果、数据文件、表格里的数据时，用 CSV 工具：不确定有哪些文件就先调用 list_experiment_files，不确定有哪些列就先调用 describe_experiment_file，再调用 group_statistics 计算。文件名和列名必须来自这些工具返回的结果，不要猜。回答时说明每组用了几个有效值、有几个缺失。工具只返回汇总，不返回原始行。
 10. 统计或比较实验结果时，不同实验条件（如 config 列的不同取值）不能混在一起算一个数来代表某种方法：用户没说明时，默认按实验条件列分组；用户明确要求不分组的总体统计时可以算，但必须说明混合了哪几种条件。"""
+
+TRANSLATE_PROMPT = """Translate the user's question from Chinese into English. The English question will be used to search an English academic dissertation.
+
+Rules:
+- Translate faithfully. Do not answer the question.
+- Do not add anything that is not in the question: no numbers, examples, explanations or guesses.
+- Keep abbreviations and technical names unchanged, for example ARI, GRU, MLP, PC1, K-means, VaDeSC, C-index.
+- Output only the English question, on one line."""
