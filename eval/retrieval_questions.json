@@ -16,7 +16,7 @@
   {"id": "q15", "question": "预训练跑多少轮？学习率是多少？", "file": "dissertation.pdf", "groups": [[22]]},
   {"id": "q16", "question": "析因实验比较了哪几个因素？一共训练了多少次？", "file": "dissertation.pdf", "groups": [[4, 22], [4, 23, 29]]},
   {"id": "q17", "question": "参考配置具体怎么设置？", "file": "dissertation.pdf", "groups": [[23]]},
-  {"id": "q18", "question": "一次训练在什么情况下被判定为塌缩？", "file": "dissertation.pdf", "groups": [[23, 67, 72]]},
+  {"id": "q18", "question": "一次训练在什么情况下被判定为塌缩？", "file": "dissertation.pdf", "groups": [[23, 65, 67, 72]]},
   {"id": "q19", "question": "共识划分是怎么构建的？", "file": "dissertation.pdf", "groups": [[23]]},
   {"id": "q20", "question": "预训练对 MLP 有什么影响？", "file": "dissertation.pdf", "groups": [[4, 28, 45]]},
   {"id": "q21", "question": "打乱训练时的生存标签后，MLP 的 C-index 变成多少？", "file": "dissertation.pdf", "groups": [[30]]},
