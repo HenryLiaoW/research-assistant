@@ -12,10 +12,12 @@ tools.py — 工具箱：工具的"菜单"（给模型看的 JSON Schema）和"�
 import json
 import math
 import statistics
+from pathlib import Path
 
 import config
 import csv_tools
 import memory
+import retrieval
 
 # ---- 菜单：发给模型的工具定义（OpenAI 兼容格式）----
 TOOLS = [
@@ -136,6 +138,25 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": (
+                "在资料库（论文、实验协议等 PDF）里检索和问题相关的段落，返回原文片段和出处（文件、PDF 页码、章节）。"
+                "用户问到资料里的内容时调用。资料是英文的，所以 query 要用英文；"
+                "如果用户用其他语言提问，先把问题翻译成英文再检索。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "英文检索词，例如 'number of pretraining epochs'"},
+                    "k": {"type": "integer", "description": f"返回几个片段，1–{config.MAX_SEARCH_K}，默认 {config.SEARCH_TOP_K}"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -209,6 +230,45 @@ def group_statistics(file, value_column, group_by=None) -> dict:
 
 
 
+# ---- 资料检索工具（阶段 4e）：把 retrieval.DocumentSearch 包成工具 ----
+# 检索器第一次被调用时才创建（要加载约 2 GB 的嵌入模型，十几秒），之后整个进程复用。
+# 注意：检索到的原文片段会作为工具结果发给模型 API；整篇论文不会发出去。
+_searcher = None
+
+
+def _get_searcher():
+    """懒加载检索器。先检查索引在不在，避免没建索引时白白加载模型。"""
+    global _searcher
+    if _searcher is None:
+        if not (Path(config.INDEX_DIR) / "manifest.json").exists():
+            raise FileNotFoundError(f"索引不存在：{config.INDEX_DIR}/，请先运行 python build_index.py")
+        _searcher = retrieval.DocumentSearch(config.INDEX_DIR, retrieval.Embedder(config.EMBEDDING_MODEL))
+    return _searcher
+
+
+def search_documents(query, k=None) -> dict:
+    """检索资料。谁调用：run_tool()。输入：检索词、可选的条数。输出：ok + 每个片段的原文和出处。"""
+    if not isinstance(query, str) or not query.strip():
+        return {"ok": False, "error": "query 必须是非空字符串"}
+    if len(query) > config.MAX_QUERY_CHARS:
+        return {"ok": False, "error": f"query 太长（{len(query)} 字符），上限 {config.MAX_QUERY_CHARS}"}
+    if k is None:
+        k = config.SEARCH_TOP_K
+    if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= config.MAX_SEARCH_K:
+        return {"ok": False, "error": f"k 必须是 1 到 {config.MAX_SEARCH_K} 之间的整数，收到 {k!r}"}
+    try:
+        searcher = _get_searcher()
+    except (FileNotFoundError, ValueError) as e:     # 没建索引 / 索引和当前模型不一致
+        return {"ok": False, "error": str(e)}
+    results = searcher.search(query.strip(), k)
+    return {
+        "ok": True,
+        "query": query.strip(),
+        "results": [{"chunk_id": r["chunk_id"], "file": r["file"], "page": r["page"], "label": r["label"],
+                     "section": r["section"], "score": r["score"], "text": r["text"]} for r in results],
+    }
+
+
 # 工具名 → 实现函数。模型给的名字只在这张表里查，不会凭名字去执行任意代码。
 TOOL_IMPLEMENTATIONS = {
     "calculate_stats": calculate_stats,
@@ -218,6 +278,7 @@ TOOL_IMPLEMENTATIONS = {
     "list_experiment_files": list_experiment_files,
     "describe_experiment_file": describe_experiment_file,
     "group_statistics": group_statistics,
+    "search_documents": search_documents,
 }
 
 

@@ -14,7 +14,9 @@ chat.py — 阶段 2（上半）：多轮对话。同一次运行里，模型能
 只在用户明确要求"记住"时由模型调用 save_memory 写入，跨运行保留。
 
 会发给 API 的内容：AGENT_SYSTEM_PROMPT、本次会话中保留的历史消息（最多 config.MAX_HISTORY_TURNS 个回合）、
-工具菜单、工具请求与结果。不会发送本机任何文件。
+工具菜单、工具请求与结果。工具结果里可能包含：CSV 的统计汇总（不含原始行）、长期记忆的内容、
+search_documents 检索到的资料原文片段（每次最多 config.MAX_SEARCH_K 段，带文件名和页码）。
+不会发送整篇 PDF 或其他本机文件。
 """
 
 import time

@@ -54,6 +54,11 @@ CHUNK_OVERLAP = 100        # 相邻 chunk 最多重叠多少字符（只取完�
 SKIP_SECTIONS = ("Project Submission Pro-Forma", "Declaration", "Acknowledgements", "Table of Contents", "Contents",
                  "List of tables", "List of figures", "List of abbreviations", "References", "Bibliography")
 
+# ---- 资料检索工具（阶段 4e）----
+SEARCH_TOP_K = 3           # search_documents 默认返回几个 chunk（= 4d 评估用的 k）
+MAX_SEARCH_K = 5           # 模型最多能要几个 chunk：每个约 500 字符，都会作为工具结果发给模型 API
+MAX_QUERY_CHARS = 500      # 检索词最长多少字符，防止模型把整段对话塞进检索词
+
 # ---- 评估题翻译（阶段 4d 实验 2：中文问题先翻译成英文再检索）----
 # 会发给 API 的只有提示词和每道题的中文问题，不发送论文内容。翻译要稳定，所以温度为 0。
 TRANSLATE_TEMPERATURE = 0.0
@@ -74,7 +79,8 @@ AGENT_SYSTEM_PROMPT = """你是一个研究助手，回答简洁、直接。
 7. 用户询问任何关于他自己的事实（"我的……是什么""我之前……""我用了几个……"等）、或你不知道的个人信息时，必须先调用 search_memory 查找，不要反问用户、不要询问是否需要查；查到就根据结果回答并说明来自记忆，查不到就如实说没有记录，不要编造。实验结果表格里的数据不属于个人事实，按规则 9 处理。
 8. 只有当用户明确要求"忘掉 / 删掉"某条记忆时，才调用 forget_memory，并且要用 search_memory 查到的 id。
 9. 用户问到实验结果、数据文件、表格里的数据时，用 CSV 工具：不确定有哪些文件就先调用 list_experiment_files，不确定有哪些列就先调用 describe_experiment_file，再调用 group_statistics 计算。文件名和列名必须来自这些工具返回的结果，不要猜。回答时说明每组用了几个有效值、有几个缺失。工具只返回汇总，不返回原始行。
-10. 统计或比较实验结果时，不同实验条件（如 config 列的不同取值）不能混在一起算一个数来代表某种方法：用户没说明时，默认按实验条件列分组；用户明确要求不分组的总体统计时可以算，但必须说明混合了哪几种条件。"""
+10. 统计或比较实验结果时，不同实验条件（如 config 列的不同取值）不能混在一起算一个数来代表某种方法：用户没说明时，默认按实验条件列分组；用户明确要求不分组的总体统计时可以算，但必须说明混合了哪几种条件。
+11. 用户问到论文、实验协议等资料里的内容时，先调用 search_documents 检索，只根据检索到的原文回答；检索结果里没有答案时，如实说没有找到，不要用常识补充。资料是英文的，检索词用英文写。"""
 
 TRANSLATE_PROMPT = """Translate the user's question from Chinese into English. The English question will be used to search an English academic dissertation.
 
