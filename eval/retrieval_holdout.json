@@ -1,0 +1,14 @@
+[
+  {"id": "h01", "question": "论文的总体研究问题是什么？下面分成了哪几个子问题？", "file": "dissertation.pdf", "groups": [[10]]},
+  {"id": "h02", "question": "这项研究的伦理审批是怎么处理的？", "file": "dissertation.pdf", "groups": [[1, 24, 55]]},
+  {"id": "h03", "question": "把输入换成高斯随机数据之后，跨种子 ARI 是多少？有几次训练塌缩？", "file": "dissertation.pdf", "groups": [[30]]},
+  {"id": "h04", "question": "直接在 222 个手工特征上跑 K-means（K = 3），跨种子 ARI 是多少？和 MLP 的 VaDeSC 划分一致吗？", "file": "dissertation.pdf", "groups": [[30, 66]]},
+  {"id": "h05", "question": "事后对预训练 GRU 扫描 K = 2 到 8，平均 ARI 最高的是哪个 K？哪些 K 被归入了近优集合？", "file": "dissertation.pdf", "groups": [[31, 81], [32, 38, 41, 45, 81]]},
+  {"id": "h06", "question": "沿潜在空间里的 Cox 方向把验证记录分成十组，死亡率从最低一组到最高一组是怎么变化的？", "file": "dissertation.pdf", "groups": [[33]]},
+  {"id": "h07", "question": "验证集里有多少比例的住院记录测过 TroponinI？Cholesterol 呢？", "file": "dissertation.pdf", "groups": [[26, 33], [26]]},
+  {"id": "h08", "question": "正好在 48:00 记录的读数是怎么处理的？一共有多少条？", "file": "dissertation.pdf", "groups": [[18, 19, 26, 68], [68]]},
+  {"id": "h09", "question": "预训练的 MLP 一共训练了多少次？其中几次塌缩？", "file": "dissertation.pdf", "groups": [[4, 28, 45]]},
+  {"id": "h10", "question": "为什么这项研究的结果不能用来在入院时做预测？", "file": "dissertation.pdf", "groups": [[18, 43]]},
+  {"id": "h11", "question": "为什么论文认为共识聚合本身也需要单独评估？", "file": "dissertation.pdf", "groups": [[31, 42]]},
+  {"id": "h12", "question": "在验证集上，GRU 的第一主成分（PC1）在多少个种子上拒绝了单峰假设？MLP 呢？", "file": "dissertation.pdf", "groups": [[29, 36, 37, 39, 45]]}
+]

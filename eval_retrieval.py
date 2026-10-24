@@ -4,6 +4,8 @@ eval_retrieval.py — 检索评估（阶段 4d）：用 eval/retrieval_questions
 用法（项目目录、已激活 .venv、已运行过 python build_index.py）：
     python eval_retrieval.py            跑完所有题，打印每题结果和总分，结果另存到 eval/local/
     python eval_retrieval.py --k 5      每题取前 5 个结果（默认 3 = 交给模型的 chunk 数）
+    python eval_retrieval.py --questions eval/retrieval_holdout.json
+                                        用留出集评估。留出集调试期间不运行，最终配置确定后只跑一次
 
 指标：
     完整召回@k（主指标）：一道题的所有证据组都在前 k 个结果里找到才得 1 分，再对所有题求平均
@@ -22,7 +24,7 @@ from pathlib import Path
 import config
 import retrieval
 
-QUESTIONS_PATH = Path("eval/retrieval_questions.json")
+DEFAULT_QUESTIONS = "eval/retrieval_questions.json"   # 开发集：迭代时用
 RESULTS_DIR = Path("eval/local")
 DEFAULT_K = 3
 
@@ -68,9 +70,12 @@ def evaluate(questions: list, searcher, k: int) -> tuple:
 def main() -> None:
     parser = argparse.ArgumentParser(description="用评估题给检索打分（只在本机运行，不调用模型 API）")
     parser.add_argument("--k", type=int, default=DEFAULT_K, help=f"每题取前几个结果（默认 {DEFAULT_K}）")
+    parser.add_argument("--questions", default=DEFAULT_QUESTIONS, help=f"题目文件（默认开发集 {DEFAULT_QUESTIONS}）")
     args = parser.parse_args()
 
-    questions = json.loads(QUESTIONS_PATH.read_text(encoding="utf-8"))
+    questions_path = Path(args.questions)
+    questions = json.loads(questions_path.read_text(encoding="utf-8"))
+    print(f"题目：{questions_path}（{len(questions)} 题）")
     print(f"加载嵌入模型 {config.EMBEDDING_MODEL} 和索引 {config.INDEX_DIR}/ ……")
     searcher = retrieval.DocumentSearch(config.INDEX_DIR, retrieval.Embedder(config.EMBEDDING_MODEL))
     m = searcher.manifest
@@ -88,8 +93,8 @@ def main() -> None:
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    out = RESULTS_DIR / f"retrieval_{config.EMBEDDING_MODEL.split('/')[-1]}_k{args.k}_{stamp}.json"
-    run = {"index": searcher.manifest, "k": args.k, "summary": summary, "rows": rows,
+    out = RESULTS_DIR / f"{questions_path.stem}_{config.EMBEDDING_MODEL.split('/')[-1]}_k{args.k}_{stamp}.json"
+    run = {"questions_file": str(questions_path), "index": searcher.manifest, "k": args.k, "summary": summary, "rows": rows,
            "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     out.write_text(json.dumps(run, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"结果已保存：{out}")
