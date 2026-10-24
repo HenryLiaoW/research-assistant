@@ -79,6 +79,22 @@ class CsvToolsTest(unittest.TestCase):
         json.dumps(r, ensure_ascii=False)
         self.assertEqual([g["group"] for g in r["groups"]], ["0", "1"])
 
+    def test_non_finite_values_skipped_and_reported(self):
+        # pandas 会把 CSV 里的 inf / -inf 读成无穷大；它们不能参与统计，也不能悄悄丢掉
+        (self.data / "inf.csv").write_text("config,score\nA,1.0\nA,inf\nA,3.0\nA,-inf\nA,\n", encoding="utf-8")
+        r = self.stats("score", filename="inf.csv")
+        self.assertTrue(r["ok"])
+        g = r["groups"][0]
+        self.assertEqual((g["count"], g["missing"], g["non_finite"]), (2, 1, 2))
+        self.assertAlmostEqual(g["mean"], 2.0)
+        self.assertAlmostEqual(g["population_std"], 1.0)
+        json.dumps(r, allow_nan=False)   # 严格 JSON：结果里不能出现 Infinity / NaN
+
+    def test_only_non_finite_values_gives_no_stats(self):
+        (self.data / "inf2.csv").write_text("score\ninf\n-inf\n", encoding="utf-8")
+        g = self.stats("score", filename="inf2.csv")["groups"][0]
+        self.assertEqual((g["count"], g["non_finite"], g["mean"]), (0, 2, None))
+
     def test_missing_group_key_is_reported(self):
         (self.data / "gap.csv").write_text("g,v\nA,1\n,2\nA,3\n", encoding="utf-8")
         r = self.stats("v", "g", filename="gap.csv")

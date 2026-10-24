@@ -27,6 +27,7 @@ group_stats ────→ _load      _is_number_column
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from pandas.api.types import is_bool_dtype, is_numeric_dtype
 
@@ -122,7 +123,8 @@ def group_stats(data_dir: str, filename, value_column, group_by, max_rows: int, 
     """对一个数值列做（可选分组的）描述统计。
 
     输入：文件名、值列名、分组列名（None 或空字符串表示不分组）、行数和组数上限。
-    输出：每组的 count（实际参与计算的个数）、missing（被跳过的空值个数）、mean、min、max、population_std。
+    输出：每组的 count（实际参与计算的个数）、missing（被跳过的空值个数）、
+          non_finite（被跳过的 inf / -inf 个数）、mean、min、max、population_std。
     """
     df, error = _load(data_dir, filename, max_rows)
     if error:
@@ -167,15 +169,18 @@ def group_stats(data_dir: str, filename, value_column, group_by, max_rows: int, 
     results = []
     for label, values in groups:
         valid = values.dropna()
-        row = {"group": label, "count": int(len(valid)), "missing": int(values.isna().sum())}
-        if len(valid) == 0:
+        finite = valid[np.isfinite(valid)]
+        # non_finite：被跳过的 inf / -inf 个数，和 missing 一样报给模型，不能悄悄丢掉
+        row = {"group": label, "count": int(len(finite)), "missing": int(values.isna().sum()),
+               "non_finite": int(len(valid) - len(finite))}
+        if len(finite) == 0:
             row.update({"mean": None, "min": None, "max": None, "population_std": None})
         else:
             row.update({
-                "mean": float(valid.mean()),
-                "min": float(valid.min()),
-                "max": float(valid.max()),
-                "population_std": float(valid.std(ddof=0)),
+                "mean": float(finite.mean()),
+                "min": float(finite.min()),
+                "max": float(finite.max()),
+                "population_std": float(finite.std(ddof=0)),
             })
         results.append(row)
 
