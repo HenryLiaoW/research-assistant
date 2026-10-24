@@ -162,6 +162,15 @@ def run_agent(client: OpenAI, history: list) -> AgentResult:
                      f"tokens prompt={usage.prompt_tokens} completion={usage.completion_tokens}，"
                      f"耗时 {time.perf_counter() - t0:.2f} 秒")
 
+        if choice.finish_reason == "length":
+            # 先判断截断，再看工具请求：被截断的回复是不完整的，里面的工具请求（参数可能只有半截）一律不执行，
+            # 写操作（如 save_memory）尤其不能由半截回复触发。历史里只放文字、不放 tool_calls，协议保持完整。
+            answer = msg.content or ""
+            if msg.tool_calls:
+                answer = (answer + "\n" if answer else "") + "（回复被截断，其中的工具请求没有执行。）"
+            messages.append({"role": "assistant", "content": answer})
+            return AgentResult("truncated", answer, round_no, tool_call_count)
+
         if msg.tool_calls:
             # 协议要求：先把"带 tool_calls 的 assistant 消息"原样放回历史，再放每个工具的结果。
             # 这里手动拼 dict 而不是直接 append SDK 对象，为的是让你看清协议里到底有哪些字段。
@@ -183,8 +192,6 @@ def run_agent(client: OpenAI, history: list) -> AgentResult:
 
         answer = msg.content or ""
         messages.append({"role": "assistant", "content": answer})  # 最终回答进入历史，下一轮可见
-        if choice.finish_reason == "length":
-            return AgentResult("truncated", answer, round_no, tool_call_count)
         if choice.finish_reason == "stop":
             return AgentResult("ok", answer, round_no, tool_call_count)
         # content_filter / insufficient_system_resource / aborted 等：如实报告，不假装正常
