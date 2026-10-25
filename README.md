@@ -10,9 +10,10 @@
 - **实验结果统计**：`list_experiment_files` / `describe_experiment_file` / `group_statistics` 只读 `data/` 目录里的 `.csv`，按列分组算数量、缺失数、非有限值数、均值、最值、总体标准差。模型只给文件名和列名，数字由 Python 计算，只把汇总交给模型。
 - **长期记忆**：用户说"记住"时模型请求 `save_memory`，说"忘掉"时请求 `forget_memory`（软删除）。**两个写操作都要在终端输入 y 才执行**，默认不执行；确认由代码强制，不依赖提示词。问到自己的事实时模型调用 `search_memory`。存储是 SQLite（`memory.sqlite3`，不进 git），所有 SQL 参数化。
 - **多轮对话**：`python chat.py`。`/new` 重开，`/history` 查看，`/memories` 列出记忆，`/quit` 退出。历史只保留最近 `MAX_HISTORY_TURNS` 个回合，按整回合裁剪；一轮出错时回滚到这一轮的用户消息之前。
+- **端到端评估**：`eval_agent.py` 用固定题目跑完整的 Agent（真实调用模型 API），自动检查工具选择、数字和关键词、检索命中、引用、拒答和记忆行为，并生成人工判分表（回答正确、引用支持）。写记忆用临时库，确认由脚本代答。题目文件含论文结果数字，只保存在作者本机（`eval/local/`）。
 - **检索评估**：`eval_retrieval.py` 用人工标注的页码证据给检索打分（完整召回@k、召回@k、MRR），只在本机运行，不调用模型 API。
 - **运行日志**：每条请求在 `logs/trace-<日期>.jsonl` 追加一行 JSON：每次模型调用的 token 和耗时，每次工具调用的参数、成败、耗时和等待确认的时间，检索到的 chunk 编号和分数，索引版本，最终回答和引用。只写在本机（不进 git），不记录密钥和检索段落原文。
-- 还没有：端到端回答评估（4f）、网页界面。
+- 还没有：网页界面。
 
 ## 演示（真实运行记录）
 
@@ -123,6 +124,7 @@ python -m unittest discover -s tests
 | `retrieval.py` | 本地嵌入（e5 的 query/passage 前缀，归一化向量）、索引保存与加载、`DocumentSearch.search`（向量点积取前 k）；索引与当前模型不一致时报错；资料指纹与过期检查 `ensure_fresh` |
 | `build_index.py` | 建索引：解析 → 分块 → 嵌入 → 保存 `chunks.jsonl`、`embeddings.npy`、`manifest.json`（含每个资料文件的指纹） |
 | `eval_retrieval.py` | 检索评估：完整召回@k、召回@k、MRR、检索耗时；结果存 `eval/local/`（不进 git） |
+| `eval_agent.py` | 端到端评估：逐题运行 Agent、自动判分（`score_case`）、汇总多次运行的稳定性、生成人工判分表（`--tally` 汇总）、改了标准答案后不调 API 重新判分（`--rescore`） |
 | `translate_questions.py` | 把评估题翻译成英文（一题一次请求，检查译文没有凭空多出数字） |
 | `csv_tools.py` | 受限 CSV 统计：路径白名单、行数上限、`list_files / describe_file / group_stats`；只返回汇总 |
 | `memory.py` | SQLite 存储层：`connect / save / search / forget / list_all`，软删除，参数化 SQL |
@@ -131,7 +133,7 @@ python -m unittest discover -s tests
 | `docs/` | 资料 PDF；只有合成样例 `sample_protocol.pdf` 进 git |
 | `eval/` | 检索评估题（开发集、留出集及英文译文）和每阶段的人工跑测记录 `cases.md` |
 | `scripts/` | 生成合成样例 PDF 的脚本 |
-| `tests/` | 离线单元测试（173 个，用假客户端，不调用 API）：工具边界、历史裁剪与回滚、记忆、CSV 与路径攻击、分块、索引、检索、评估打分、引用、写入确认、计时口径、运行日志、索引过期检查 |
+| `tests/` | 离线单元测试（191 个，用假客户端，不调用 API）：工具边界、历史裁剪与回滚、记忆、CSV 与路径攻击、分块、索引、检索、评估打分、引用、写入确认、计时口径、运行日志、索引过期检查、端到端评估的判分规则 |
 | `NOTES.md` | 每阶段的学习记录、实验和设计取舍 |
 | `RESUME_TARGET.md` | 阶段 4 的验收标准（目标稿，不代表已完成） |
 | `.env.example` | 密钥占位符；复制为 `.env` 后填真实密钥（`.env` 不进 git） |
