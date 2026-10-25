@@ -106,6 +106,12 @@ class AgentCitationTest(unittest.TestCase):
         r = run_agent(FakeClient([reply("你好")]), ask("hi"))
         self.assertFalse(r.uncited)
 
+    def test_failed_or_empty_search_no_flag(self, _log):
+        for result in ({"ok": False, "error": "索引已过期：新增了 x.pdf"}, {"ok": True, "query": "q", "results": []}):
+            with patch("agent.run_tool", return_value=result):
+                r, _, _ = self.run_with_answer("检索失败，无法回答。")
+            self.assertFalse(r.uncited)                               # 没有证据可引用，不该警告
+
 
 if __name__ == "__main__":
     unittest.main()

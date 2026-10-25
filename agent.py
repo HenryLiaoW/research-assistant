@@ -192,7 +192,7 @@ def run_agent(client: OpenAI, history: list, confirm=None, trace=None) -> AgentR
     waited = 0.0                             # 等用户确认的总秒数：从已用时间里扣掉，人想多久都不该让 Agent 超时
     tool_call_count = 0
     last_tool_results: list = []
-    searched = False                         # 这次请求有没有检索过资料（用来判断回答是否漏了引用）
+    searched = False                         # 这次请求有没有检索到资料（用来判断回答是否漏了引用）
 
     for round_no in range(1, config.MAX_TOOL_ROUNDS + 1):
         elapsed = time.perf_counter() - started - waited
@@ -242,7 +242,9 @@ def run_agent(client: OpenAI, history: list, confirm=None, trace=None) -> AgentR
             last_tool_results = execute_tool_calls(msg.tool_calls, messages, confirm)  # append 工具结果
             waited += sum(r["wait_ms"] for r in last_tool_results) / 1000
             trace["tool_calls"].extend(tracing.tool_entry(round_no, r) for r in last_tool_results)
-            searched = searched or any(tc.function.name == "search_documents" for tc in msg.tool_calls)
+            # 只有检索成功、而且真的返回了片段，才有证据可引用；检索失败时不带编号是对的，不该警告
+            searched = searched or any(r["tool"] == "search_documents" and r["result"].get("ok") and r["result"].get("results")
+                                       for r in last_tool_results)
             tool_call_count += len(msg.tool_calls)
             continue  # 带着工具结果再问一次模型
 
