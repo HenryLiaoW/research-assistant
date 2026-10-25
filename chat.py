@@ -94,8 +94,10 @@ def main() -> None:
             print(describe_api_error(e))
             continue
 
+        elapsed = time.perf_counter() - t0 - result.wait_seconds   # 不含等你确认的时间
+        waited = f"（另有等待确认 {result.wait_seconds:.1f} 秒）" if result.wait_seconds else ""
         log("agent", f"状态={result.status}，模型调用 {result.model_calls} 次，"
-                     f"工具调用 {result.tool_calls} 次，耗时 {time.perf_counter() - t0:.2f} 秒，"
+                     f"工具调用 {result.tool_calls} 次，耗时 {elapsed:.2f} 秒{waited}，"
                      f"历史 {describe_history(history)}")
         if result.status == "truncated":
             print("[warn] 回答被截断：已达到 MAX_OUTPUT_TOKENS，可在 config.py 中调大。")

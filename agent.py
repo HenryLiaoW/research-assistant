@@ -36,6 +36,7 @@ class AgentResult:
     citations: list = field(default_factory=list)           # 回答里有效的证据编号（来自检索结果）
     invalid_citations: list = field(default_factory=list)   # 回答里出现、但不在检索结果中的编号
     uncited: bool = False  # 这次请求检索了资料，回答却没有标注任何证据编号
+    wait_seconds: float = 0.0  # 等用户确认写操作的总秒数：不算工具耗时，也不占总时间预算
 
 
 def log(tag: str, text: str) -> None:
@@ -103,40 +104,49 @@ WRITE_TOOLS = {"save_memory", "forget_memory"}
 def execute_tool_calls(tool_calls, messages: list, confirm=None) -> list:
     """执行模型提出的全部工具请求，并按协议把每个结果追加进 messages。谁调用：run_agent()。
 
-    返回这一轮的工具结果列表（给 max_rounds 兜底用）。
+    返回这一轮每个工具的记录 {"tool", "result", "ms", "wait_ms"}：
+    ms 只算工具本身的执行时间；wait_ms 是等用户确认的时间（只有写操作才有，读工具为 0）。
+    两者分开记：否则用户想了 18 秒才输入 y，会被记成"save_memory 耗时 18 秒"。
     协议要点：每个 tool_call 的 id 必须对应一条 role="tool" 的消息，一个不能少，
     否则下一次模型调用会被 API 以 400 拒绝。
     """
-    results = []
+    records = []
     for tc in tool_calls:
         name = tc.function.name
         args_json = tc.function.arguments
         log("tool-call", f"模型请求调用 {name}，参数 {args_json}")
 
-        t0 = time.perf_counter()
-        if name in WRITE_TOOLS and not (confirm and confirm(name, args_json)):
-            # 没有确认函数（如单次运行的 agent.main）或用户拒绝：不执行，如实告诉模型
-            result = {"ok": False, "error": "用户没有确认，未执行这个写操作"}
-        else:
+        approved, wait_ms = True, 0.0
+        if name in WRITE_TOOLS:
+            # 没有确认函数（如单次运行的 agent.main）或用户拒绝：approved 为 False，下面不执行
+            t_wait = time.perf_counter()
+            approved = bool(confirm and confirm(name, args_json))
+            wait_ms = (time.perf_counter() - t_wait) * 1000
+
+        t0 = time.perf_counter()                # 从这里开始才是工具自己的耗时
+        if approved:
             result = run_tool(name, args_json)  # 永远返回带 ok 字段的 dict，不抛异常
                                             # args_json 是 str（比如'{"numbers": [0.62, 0.58, 0.65]}'），
                                             # run_tool 内部会 json.loads() 解析成 dict
+        else:
+            result = {"ok": False, "error": "用户没有确认，未执行这个写操作"}   # 如实告诉模型
         ms = (time.perf_counter() - t0) * 1000
         if name == "search_documents" and result.get("ok"):
             citations.assign_ids(result["results"], messages)   # 程序给每个片段编号 E1、E2……，模型只引用编号
 
+        waited = f"，等待确认 {wait_ms / 1000:.1f} 秒" if name in WRITE_TOOLS else ""
         if result.get("ok"):
-            log("tool", f"{name} 成功（{ms:.1f} ms）：{json.dumps(result, ensure_ascii=False)}")
+            log("tool", f"{name} 成功（{ms:.1f} ms{waited}）：{json.dumps(result, ensure_ascii=False)}")
         else:
-            log("tool", f"{name} 失败（{ms:.1f} ms）：{result.get('error')}")
+            log("tool", f"{name} 失败（{ms:.1f} ms{waited}）：{result.get('error')}")
 
         messages.append({
             "role": "tool",
             "tool_call_id": tc.id,
             "content": json.dumps(result, ensure_ascii=False),  # 结构化结果，模型按数据读
         })
-        results.append({"tool": name, "result": result})
-    return results
+        records.append({"tool": name, "result": result, "ms": round(ms, 1), "wait_ms": round(wait_ms, 1)})
+    return records
 
 
 def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
@@ -146,7 +156,7 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
     输出：AgentResult；同时就地修改 history —— 把这条请求产生的工具请求、工具结果和最终回答
     都追加进去，下一轮对话模型才能看到。
     confirm(name, args_json) -> bool：写操作（WRITE_TOOLS）执行前调用，返回 True 才执行；不给则一律不写。
-    上限：config.MAX_TOOL_ROUNDS 轮、config.MAX_TOTAL_SECONDS 秒。API 异常不在这里捕获，冒给调用方。
+    上限：config.MAX_TOOL_ROUNDS 轮、config.MAX_TOTAL_SECONDS 秒（只算程序和模型的时间，不含等用户确认的时间）。API 异常不在这里捕获，冒给调用方。
     """
     assert history and history[-1]["role"] == "user", "run_agent 需要 history 以一条 user 消息结尾"
 
@@ -158,17 +168,18 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
 
     messages = history                       # 同一个列表对象：循环中追加的消息会留在会话里
     started = time.perf_counter()
+    waited = 0.0                             # 等用户确认的总秒数：从已用时间里扣掉，人想多久都不该让 Agent 超时
     tool_call_count = 0
     last_tool_results: list = []
     searched = False                         # 这次请求有没有检索过资料（用来判断回答是否漏了引用）
 
     for round_no in range(1, config.MAX_TOOL_ROUNDS + 1):
-        elapsed = time.perf_counter() - started
+        elapsed = time.perf_counter() - started - waited
         if elapsed > config.MAX_TOTAL_SECONDS:
-            answer = f"已用时 {elapsed:.0f} 秒，超过总时间预算 {config.MAX_TOTAL_SECONDS} 秒，停止。"
+            answer = f"已用时 {elapsed:.0f} 秒（不含等待确认的时间），超过总时间预算 {config.MAX_TOTAL_SECONDS} 秒，停止。"
             # append 管的是"正常结束时一定闭合"
             messages.append({"role": "assistant", "content": answer}) 
-            return AgentResult("time_budget", answer, round_no - 1, tool_call_count)
+            return AgentResult("time_budget", answer, round_no - 1, tool_call_count, wait_seconds=waited)
 
         t0 = time.perf_counter()
         response = call_model(client, messages)  # 和 ask_once 类似，但多了工具菜单和历史
@@ -186,7 +197,7 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
             if msg.tool_calls:
                 answer = (answer + "\n" if answer else "") + "（回复被截断，其中的工具请求没有执行。）"
             messages.append({"role": "assistant", "content": answer})
-            return AgentResult("truncated", answer, round_no, tool_call_count)
+            return AgentResult("truncated", answer, round_no, tool_call_count, wait_seconds=waited)
 
         if msg.tool_calls:
             # 协议要求：先把"带 tool_calls 的 assistant 消息"原样放回历史，再放每个工具的结果。
@@ -204,6 +215,7 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
                 ],
             })  # 这里 append 的是工具调用请求
             last_tool_results = execute_tool_calls(msg.tool_calls, messages, confirm)  # append 工具结果
+            waited += sum(r["wait_ms"] for r in last_tool_results) / 1000
             searched = searched or any(tc.function.name == "search_documents" for tc in msg.tool_calls)
             tool_call_count += len(msg.tool_calls)
             continue  # 带着工具结果再问一次模型
@@ -216,16 +228,16 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
         status = "ok" if choice.finish_reason == "stop" else f"unexpected:{choice.finish_reason}"
         # unexpected：content_filter / insufficient_system_resource / aborted 等，如实报告，不假装正常
         return AgentResult(status, shown, round_no, tool_call_count, valid, invalid,
-                           uncited=searched and not valid and bool(answer.strip()))
+                           uncited=searched and not valid and bool(answer.strip()), wait_seconds=waited)
 
     # 轮数用尽：不再调模型，但把最后一轮工具算出的结果原样交给用户（阶段 1 的遗留问题）。
     answer = (
         f"已达到 {config.MAX_TOOL_ROUNDS} 轮工具循环上限仍未得到最终回答，停止。"
         f"共执行了 {tool_call_count} 次工具调用。最后一轮工具的原始结果："
-        + json.dumps(last_tool_results, ensure_ascii=False)
+        + json.dumps([{"tool": r["tool"], "result": r["result"]} for r in last_tool_results], ensure_ascii=False)
     )
     messages.append({"role": "assistant", "content": answer})
-    return AgentResult("max_rounds", answer, config.MAX_TOOL_ROUNDS, tool_call_count)
+    return AgentResult("max_rounds", answer, config.MAX_TOOL_ROUNDS, tool_call_count, wait_seconds=waited)
 
 
 def main() -> None:
