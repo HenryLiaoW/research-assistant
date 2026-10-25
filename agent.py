@@ -41,8 +41,23 @@ class AgentResult:
 
 
 def log(tag: str, text: str) -> None:
-    """终端执行记录。只打印工具名、参数、结果、耗时，不打印密钥。"""
+    """终端执行记录。只打印工具名、参数、结果摘要、耗时，不打印密钥。"""
     print(f"[{tag}] {text}")
+
+
+SUMMARY_CHARS = 200   # 终端里一条工具结果最多显示多少字符；完整结果照样发给模型，细节在运行日志里
+
+
+def summarize_result(name: str, result: dict) -> str:
+    """把工具结果压成一行给终端看。谁调用：execute_tool_calls()。只影响显示，发给模型的结果不变。"""
+    if name == "search_documents":
+        parts = [f"{r.get('evidence_id')} {r.get('file')} 第 {r.get('page')} 页（{r.get('score')}）"
+                 for r in result.get("results", [])]
+        return f"{len(parts)} 段：" + "；".join(parts)
+    text = json.dumps(result, ensure_ascii=False)
+    if len(text) <= SUMMARY_CHARS:
+        return text
+    return text[:SUMMARY_CHARS] + f"…（共 {len(text)} 字符，完整结果已发给模型）"
 
 
 def new_history() -> list:
@@ -137,7 +152,7 @@ def execute_tool_calls(tool_calls, messages: list, confirm=None) -> list:
 
         waited = f"，等待确认 {wait_ms / 1000:.1f} 秒" if name in WRITE_TOOLS else ""
         if result.get("ok"):
-            log("tool", f"{name} 成功（{ms:.1f} ms{waited}）：{json.dumps(result, ensure_ascii=False)}")
+            log("tool", f"{name} 成功（{ms:.1f} ms{waited}）：{summarize_result(name, result)}")
         else:
             log("tool", f"{name} 失败（{ms:.1f} ms{waited}）：{result.get('error')}")
 
