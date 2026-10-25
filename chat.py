@@ -11,7 +11,7 @@ chat.py — 阶段 2（上半）：多轮对话。同一次运行里，模型能
     /quit      退出（Ctrl-D 或 Ctrl-C 也可以）
 
 两种记忆：会话历史只在内存里、按回合裁剪、程序退出即失；长期记忆在 SQLite 文件里，
-只在用户明确要求"记住"时由模型调用 save_memory 写入，跨运行保留。
+只在用户明确要求"记住"时由模型调用 save_memory，而且写入和删除前都要用户在终端里输入 y 确认，跨运行保留。
 
 会发给 API 的内容：AGENT_SYSTEM_PROMPT、本次会话中保留的历史消息（最多 config.MAX_HISTORY_TURNS 个回合）、
 工具菜单、工具请求与结果。工具结果里可能包含：CSV 的统计汇总（不含原始行）、长期记忆的内容、
@@ -19,6 +19,7 @@ search_documents 检索到的资料原文片段（每次最多 config.MAX_SEARCH
 不会发送整篇 PDF 或其他本机文件。
 """
 
+import json
 import time
 
 from openai import OpenAIError
@@ -27,6 +28,22 @@ import config
 import memory
 from agent import log, new_history, rollback_last_turn, run_agent
 from llm_client import build_client, describe_api_error, load_api_key
+
+
+def confirm_write(name: str, args_json: str) -> bool:
+    """写长期记忆前问用户。谁调用：run_agent（通过 confirm 参数）。只有输入 y 才执行。"""
+    try:
+        args = json.loads(args_json)
+    except json.JSONDecodeError:
+        args = {}
+    if name == "save_memory":
+        what = f"保存一条长期记忆：「{args.get('content')}」"
+    elif name == "forget_memory":
+        what = f"删除长期记忆 #{args.get('memory_id')}"
+    else:
+        what = f"执行 {name}（参数 {args_json}）"
+    answer = input(f"[确认] 助手想要{what}。确认吗？(y/N) ").strip().lower()
+    return answer in ("y", "yes")
 
 
 def describe_history(history: list) -> str:
@@ -70,7 +87,7 @@ def main() -> None:
         history.append({"role": "user", "content": text})
         t0 = time.perf_counter()
         try:
-            result = run_agent(client, history)
+            result = run_agent(client, history, confirm=confirm_write)
         except OpenAIError as e:
             # 这一轮失败：把刚追加的 user 消息和半截产物都撤掉，历史恢复到提问前，下一轮才不会带着残缺协议再报错
             rollback_last_turn(history)

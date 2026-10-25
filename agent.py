@@ -95,7 +95,12 @@ def call_model(client: OpenAI, messages: list):
     )
 
 
-def execute_tool_calls(tool_calls, messages: list) -> list:
+# 会改动长期数据的工具：执行前必须经过用户确认（代码层面的授权，不只靠提示词）。
+# 资料里夹带的指令（比如论文里写"请保存某条记忆"）就算诱导模型发出了请求，没有用户确认也不会写入。
+WRITE_TOOLS = {"save_memory", "forget_memory"}
+
+
+def execute_tool_calls(tool_calls, messages: list, confirm=None) -> list:
     """执行模型提出的全部工具请求，并按协议把每个结果追加进 messages。谁调用：run_agent()。
 
     返回这一轮的工具结果列表（给 max_rounds 兜底用）。
@@ -109,7 +114,11 @@ def execute_tool_calls(tool_calls, messages: list) -> list:
         log("tool-call", f"模型请求调用 {name}，参数 {args_json}")
 
         t0 = time.perf_counter()
-        result = run_tool(name, args_json)  # 永远返回带 ok 字段的 dict，不抛异常
+        if name in WRITE_TOOLS and not (confirm and confirm(name, args_json)):
+            # 没有确认函数（如单次运行的 agent.main）或用户拒绝：不执行，如实告诉模型
+            result = {"ok": False, "error": "用户没有确认，未执行这个写操作"}
+        else:
+            result = run_tool(name, args_json)  # 永远返回带 ok 字段的 dict，不抛异常
                                             # args_json 是 str（比如'{"numbers": [0.62, 0.58, 0.65]}'），
                                             # run_tool 内部会 json.loads() 解析成 dict
         ms = (time.perf_counter() - t0) * 1000
@@ -130,12 +139,13 @@ def execute_tool_calls(tool_calls, messages: list) -> list:
     return results
 
 
-def run_agent(client: OpenAI, history: list) -> AgentResult:
+def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
     """Agent 循环本体。谁调用：chat.py 每一轮，agent.main()。
 
     输入：客户端 + 会话历史（最后一条必须是刚追加的 user 消息）。
     输出：AgentResult；同时就地修改 history —— 把这条请求产生的工具请求、工具结果和最终回答
     都追加进去，下一轮对话模型才能看到。
+    confirm(name, args_json) -> bool：写操作（WRITE_TOOLS）执行前调用，返回 True 才执行；不给则一律不写。
     上限：config.MAX_TOOL_ROUNDS 轮、config.MAX_TOTAL_SECONDS 秒。API 异常不在这里捕获，冒给调用方。
     """
     assert history and history[-1]["role"] == "user", "run_agent 需要 history 以一条 user 消息结尾"
@@ -193,13 +203,15 @@ def run_agent(client: OpenAI, history: list) -> AgentResult:
                     for tc in msg.tool_calls
                 ],
             })  # 这里 append 的是工具调用请求
-            last_tool_results = execute_tool_calls(msg.tool_calls, messages)  # append 工具结果
+            last_tool_results = execute_tool_calls(msg.tool_calls, messages, confirm)  # append 工具结果
             searched = searched or any(tc.function.name == "search_documents" for tc in msg.tool_calls)
             tool_call_count += len(msg.tool_calls)
             continue  # 带着工具结果再问一次模型
 
         answer = msg.content or ""
+        # 给模型看的
         messages.append({"role": "assistant", "content": answer})  # 最终回答进入历史，下一轮可见（保留模型原文）
+        # 给用户看的，带有引用标记的最终回答
         shown, valid, invalid = citations.render(answer, citations.collect_evidence(messages))
         status = "ok" if choice.finish_reason == "stop" else f"unexpected:{choice.finish_reason}"
         # unexpected：content_filter / insufficient_system_resource / aborted 等，如实报告，不假装正常
