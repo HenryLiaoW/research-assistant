@@ -26,6 +26,7 @@ from openai import OpenAIError
 
 import config
 import memory
+import tracing
 from agent import log, new_history, rollback_last_turn, run_agent
 from llm_client import build_client, describe_api_error, load_api_key
 
@@ -54,8 +55,11 @@ def describe_history(history: list) -> str:
 def main() -> None:
     client = build_client(load_api_key())
     history = new_history()
+    session_id = tracing.new_session_id()                # 同一段对话的请求在日志里共用这个编号
     memory_conn = memory.connect(config.MEMORY_DB_PATH)  # 只给 /memories 用；模型走 tools.py 里的连接
     print("多轮对话已开始。输入 /new 重开，/history 查看历史，/memories 看长期记忆，/quit 退出。")
+    if config.TRACE_ENABLED:
+        print(f"运行日志写在 {config.TRACE_DIR}/（只在本机，不进 git）。")
 
     while True:
         try:
@@ -71,6 +75,7 @@ def main() -> None:
             break
         if text == "/new":
             history = new_history()
+            session_id = tracing.new_session_id()
             print("[history] 已清空，开始新会话。")
             continue
         if text == "/history":
@@ -85,18 +90,22 @@ def main() -> None:
             continue
 
         history.append({"role": "user", "content": text})
+        trace = tracing.start(session_id, text)           # 这条请求的记录本，run_agent 边做边记
         t0 = time.perf_counter()
         try:
-            result = run_agent(client, history, confirm=confirm_write)
+            result = run_agent(client, history, confirm=confirm_write, trace=trace)
         except OpenAIError as e:
             # 这一轮失败：把刚追加的 user 消息和半截产物都撤掉，历史恢复到提问前，下一轮才不会带着残缺协议再报错
             rollback_last_turn(history)
+            tracing.write(tracing.finish(trace, time.perf_counter() - t0, error=type(e).__name__))  # 出错也留记录
             print(describe_api_error(e))
             continue
+        total = time.perf_counter() - t0
+        tracing.write(tracing.finish(trace, total, result))
 
-        elapsed = time.perf_counter() - t0 - result.wait_seconds   # 不含等你确认的时间
+        elapsed = total - result.wait_seconds   # 不含等你确认的时间
         waited = f"（另有等待确认 {result.wait_seconds:.1f} 秒）" if result.wait_seconds else ""
-        log("agent", f"状态={result.status}，模型调用 {result.model_calls} 次，"
+        log("agent", f"请求 {trace['request_id']}：状态={result.status}，模型调用 {result.model_calls} 次，"
                      f"工具调用 {result.tool_calls} 次，耗时 {elapsed:.2f} 秒{waited}，"
                      f"历史 {describe_history(history)}")
         if result.status == "truncated":

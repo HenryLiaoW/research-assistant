@@ -2,7 +2,7 @@
 
 逐阶段搭建的学习项目：一个命令行研究助手，能检索论文原文并带页码引用作答、统计实验结果 CSV、在用户确认后保存长期记忆。
 
-**当前进度：阶段 4e —— 单 Agent + 工具调用 + 多轮会话 + SQLite 长期记忆 + 受限 CSV 统计 + 本地向量检索（RAG）+ 证据编号引用。**
+**当前进度：阶段 4e —— 单 Agent + 工具调用 + 多轮会话 + SQLite 长期记忆 + 受限 CSV 统计 + 本地向量检索（RAG）+ 证据编号引用 + JSONL 运行日志。**
 
 ## 当前能做什么
 
@@ -11,7 +11,8 @@
 - **长期记忆**：用户说"记住"时模型请求 `save_memory`，说"忘掉"时请求 `forget_memory`（软删除）。**两个写操作都要在终端输入 y 才执行**，默认不执行；确认由代码强制，不依赖提示词。问到自己的事实时模型调用 `search_memory`。存储是 SQLite（`memory.sqlite3`，不进 git），所有 SQL 参数化。
 - **多轮对话**：`python chat.py`。`/new` 重开，`/history` 查看，`/memories` 列出记忆，`/quit` 退出。历史只保留最近 `MAX_HISTORY_TURNS` 个回合，按整回合裁剪；一轮出错时回滚到这一轮的用户消息之前。
 - **检索评估**：`eval_retrieval.py` 用人工标注的页码证据给检索打分（完整召回@k、召回@k、MRR），只在本机运行，不调用模型 API。
-- 还没有：端到端回答评估（4f）、运行日志、网页界面。
+- **运行日志**：每条请求在 `logs/trace-<日期>.jsonl` 追加一行 JSON：每次模型调用的 token 和耗时，每次工具调用的参数、成败、耗时和等待确认的时间，检索到的 chunk 编号和分数，索引版本，最终回答和引用。只写在本机（不进 git），不记录密钥和检索段落原文。
+- 还没有：端到端回答评估（4f）、网页界面。
 
 ## 演示（真实运行记录）
 
@@ -117,6 +118,7 @@ python -m unittest discover -s tests
 | `chat.py` | 多轮对话的命令行界面；`confirm_write` 在终端显示要写入的内容并询问 y/N |
 | `tools.py` | 工具菜单（JSON Schema）+ 工具实现 + `run_tool` 统一入口（不抛异常，失败返回 `ok=false`）；检索器懒加载 |
 | `citations.py` | 证据编号：`assign_ids` 给检索结果编号，`collect_evidence` 从历史里收集编号，`render` 把回答里的 `[E1]` 换成来源行并找出无效引用 |
+| `tracing.py` | 运行日志：`start` 开记录本，`run_agent` 往里记模型和工具调用，`finish` 汇总 token 与耗时，`write` 追加到 JSONL；写失败只警告、不中断对话 |
 | `documents.py` | PDF 解析与分块：按页和标题切段，按句子打包（≤500 字符，重叠 ≤100 字符的完整句子），`drop_sections` 跳过非正文章节 |
 | `retrieval.py` | 本地嵌入（e5 的 query/passage 前缀，归一化向量）、索引保存与加载、`DocumentSearch.search`（向量点积取前 k）；索引与当前模型不一致时报错 |
 | `build_index.py` | 建索引：解析 → 分块 → 嵌入 → 保存 `chunks.jsonl`、`embeddings.npy`、`manifest.json` |
@@ -129,7 +131,7 @@ python -m unittest discover -s tests
 | `docs/` | 资料 PDF；只有合成样例 `sample_protocol.pdf` 进 git |
 | `eval/` | 检索评估题（开发集、留出集及英文译文）和每阶段的人工跑测记录 `cases.md` |
 | `scripts/` | 生成合成样例 PDF 的脚本 |
-| `tests/` | 离线单元测试（154 个，用假客户端，不调用 API）：工具边界、历史裁剪与回滚、记忆、CSV 与路径攻击、分块、索引、检索、评估打分、引用、写入确认 |
+| `tests/` | 离线单元测试（164 个，用假客户端，不调用 API）：工具边界、历史裁剪与回滚、记忆、CSV 与路径攻击、分块、索引、检索、评估打分、引用、写入确认、计时口径、运行日志 |
 | `NOTES.md` | 每阶段的学习记录、实验和设计取舍 |
 | `RESUME_TARGET.md` | 阶段 4 的验收标准（目标稿，不代表已完成） |
 | `.env.example` | 密钥占位符；复制为 `.env` 后填真实密钥（`.env` 不进 git） |
@@ -144,3 +146,4 @@ python -m unittest discover -s tests
 - 不会发送：整篇 PDF、CSV 原始行、`data/` 以外的任何文件、API 密钥。
 - 嵌入模型在本地运行：建索引和检索时，论文原文和检索词不会发给外部服务。
 - `translate_questions.py` 会把评估题的中文问题发给模型 API。
+- 本机运行日志（`logs/`）记录你的问题和回答原文，只留在本机、不进 git、不发给任何服务；在 `config.py` 里把 `TRACE_ENABLED` 改成 False 可关闭。

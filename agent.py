@@ -21,6 +21,7 @@ from openai import OpenAI, OpenAIError
 
 import citations
 import config
+import tracing
 from llm_client import build_client, describe_api_error, load_api_key
 from tools import TOOLS, run_tool
 
@@ -104,7 +105,7 @@ WRITE_TOOLS = {"save_memory", "forget_memory"}
 def execute_tool_calls(tool_calls, messages: list, confirm=None) -> list:
     """执行模型提出的全部工具请求，并按协议把每个结果追加进 messages。谁调用：run_agent()。
 
-    返回这一轮每个工具的记录 {"tool", "result", "ms", "wait_ms"}：
+    返回这一轮每个工具的记录 {"tool", "args", "result", "ms", "wait_ms"}：
     ms 只算工具本身的执行时间；wait_ms 是等用户确认的时间（只有写操作才有，读工具为 0）。
     两者分开记：否则用户想了 18 秒才输入 y，会被记成"save_memory 耗时 18 秒"。
     协议要点：每个 tool_call 的 id 必须对应一条 role="tool" 的消息，一个不能少，
@@ -145,20 +146,25 @@ def execute_tool_calls(tool_calls, messages: list, confirm=None) -> list:
             "tool_call_id": tc.id,
             "content": json.dumps(result, ensure_ascii=False),  # 结构化结果，模型按数据读
         })
-        records.append({"tool": name, "result": result, "ms": round(ms, 1), "wait_ms": round(wait_ms, 1)})
+        records.append({"tool": name, "args": args_json, "result": result,
+                        "ms": round(ms, 1), "wait_ms": round(wait_ms, 1)})
     return records
 
 
-def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
+def run_agent(client: OpenAI, history: list, confirm=None, trace=None) -> AgentResult:
     """Agent 循环本体。谁调用：chat.py 每一轮，agent.main()。
 
     输入：客户端 + 会话历史（最后一条必须是刚追加的 user 消息）。
     输出：AgentResult；同时就地修改 history —— 把这条请求产生的工具请求、工具结果和最终回答
     都追加进去，下一轮对话模型才能看到。
     confirm(name, args_json) -> bool：写操作（WRITE_TOOLS）执行前调用，返回 True 才执行；不给则一律不写。
+    trace：调用方用 tracing.start() 开的记录本。每调用一次模型、每执行一个工具就往里记一条；
+    记录本留在调用方手里，API 中途出错时已经发生的调用也不会丢。不给就不记。
     上限：config.MAX_TOOL_ROUNDS 轮、config.MAX_TOTAL_SECONDS 秒（只算程序和模型的时间，不含等用户确认的时间）。API 异常不在这里捕获，冒给调用方。
     """
     assert history and history[-1]["role"] == "user", "run_agent 需要 history 以一条 user 消息结尾"
+    if trace is None:
+        trace = {"model_calls": [], "tool_calls": []}   # 调用方不要日志：记在一本用完就扔的本子上
 
     # 先裁剪再调用：历史太长会让每轮 prompt token 越来越贵，也可能超出模型上下文。
     trimmed = trim_history(history, config.MAX_HISTORY_TURNS)
@@ -183,12 +189,16 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
 
         t0 = time.perf_counter()
         response = call_model(client, messages)  # 和 ask_once 类似，但多了工具菜单和历史
+        model_ms = (time.perf_counter() - t0) * 1000
         choice = response.choices[0]
         msg = choice.message
         usage = response.usage
         log("model", f"第 {round_no} 轮：finish_reason={choice.finish_reason}，"
                      f"tokens prompt={usage.prompt_tokens} completion={usage.completion_tokens}，"
-                     f"耗时 {time.perf_counter() - t0:.2f} 秒")
+                     f"耗时 {model_ms / 1000:.2f} 秒")
+        trace["model_calls"].append({"round": round_no, "finish_reason": choice.finish_reason,
+                                     "prompt_tokens": usage.prompt_tokens,
+                                     "completion_tokens": usage.completion_tokens, "ms": round(model_ms, 1)})
 
         if choice.finish_reason == "length":
             # 先判断截断，再看工具请求：被截断的回复是不完整的，里面的工具请求（参数可能只有半截）一律不执行，
@@ -216,6 +226,7 @@ def run_agent(client: OpenAI, history: list, confirm=None) -> AgentResult:
             })  # 这里 append 的是工具调用请求
             last_tool_results = execute_tool_calls(msg.tool_calls, messages, confirm)  # append 工具结果
             waited += sum(r["wait_ms"] for r in last_tool_results) / 1000
+            trace["tool_calls"].extend(tracing.tool_entry(round_no, r) for r in last_tool_results)
             searched = searched or any(tc.function.name == "search_documents" for tc in msg.tool_calls)
             tool_call_count += len(msg.tool_calls)
             continue  # 带着工具结果再问一次模型
@@ -251,15 +262,19 @@ def main() -> None:
     client = build_client(load_api_key())
     history = new_history()
     history.append({"role": "user", "content": question})
+    trace = tracing.start(tracing.new_session_id(), question)
 
     t0 = time.perf_counter()
     try:
-        result = run_agent(client, history)
+        result = run_agent(client, history, trace=trace)
     except OpenAIError as e:
+        tracing.write(tracing.finish(trace, time.perf_counter() - t0, error=type(e).__name__))
         sys.exit(describe_api_error(e))
+    total = time.perf_counter() - t0
+    tracing.write(tracing.finish(trace, total, result))
 
-    log("agent", f"状态={result.status}，模型调用 {result.model_calls} 次，"
-                 f"工具调用 {result.tool_calls} 次，总耗时 {time.perf_counter() - t0:.2f} 秒")
+    log("agent", f"请求 {trace['request_id']}：状态={result.status}，模型调用 {result.model_calls} 次，"
+                 f"工具调用 {result.tool_calls} 次，总耗时 {total:.2f} 秒")
     if result.status == "truncated":
         print("[warn] 回答被截断：已达到 MAX_OUTPUT_TOKENS，可在 config.py 中调大。")
     print()

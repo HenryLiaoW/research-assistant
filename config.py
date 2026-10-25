@@ -59,6 +59,10 @@ SEARCH_TOP_K = 3           # search_documents 默认返回几个 chunk（= 4d �
 MAX_SEARCH_K = 5           # 模型最多能要几个 chunk：每个约 500 字符，都会作为工具结果发给模型 API
 MAX_QUERY_CHARS = 500      # 检索词最长多少字符，防止模型把整段对话塞进检索词
 
+# ---- 运行日志（阶段 4e）----
+TRACE_ENABLED = True       # 每条请求在日志目录里追加一行 JSON（记什么、不记什么见 tracing.py 开头）；改成 False 关闭
+TRACE_DIR = "logs"         # 只在本机，已在 .gitignore 里
+
 # ---- 评估题翻译（阶段 4d 实验 2：中文问题先翻译成英文再检索）----
 # 会发给 API 的只有提示词和每道题的中文问题，不发送论文内容。翻译要稳定，所以温度为 0。
 TRANSLATE_TEMPERATURE = 0.0

@@ -246,6 +246,13 @@ def _get_searcher():
     return _searcher
 
 
+def index_info():
+    """已加载索引的版本（嵌入模型 + 建立时间），给运行日志用；本次运行还没检索过时返回 None。谁调用：tracing.finish()。"""
+    if _searcher is None:
+        return None
+    return {"model": _searcher.manifest.get("model"), "built_at": _searcher.manifest.get("built_at")}
+
+
 def search_documents(query, k=None) -> dict:
     """检索资料。谁调用：run_tool()。输入：检索词、可选的条数。输出：ok + 每个片段的原文和出处。"""
     if not isinstance(query, str) or not query.strip():
@@ -260,7 +267,7 @@ def search_documents(query, k=None) -> dict:
         searcher = _get_searcher()
     except (FileNotFoundError, ValueError) as e:     # 没建索引 / 索引和当前模型不一致
         return {"ok": False, "error": str(e)}
-    results = searcher.search(query.strip(), k)
+    results = searcher.search(query.strip(), k) # 核心代码
     return {
         "ok": True,
         "query": query.strip(),
