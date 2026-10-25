@@ -271,3 +271,13 @@ def drop_sections(chunks: list, names) -> list:
         if section is None or section.strip().lower() not in skip:   # 没有章节名，或者不在名单里
             kept.append(chunk)
     return kept
+
+
+def pdf_files(docs_dir) -> list:
+    """资料目录里的 PDF，按文件名排序；用后缀判断，大小写都认；目录不存在时返回空列表。
+    谁调用：build_index（建索引用哪些文件）、tools 和 eval_retrieval（检查资料变没变）。
+    两边用同一个函数，"哪些算资料"的规则才不会对不上。"""
+    d = Path(docs_dir)
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.iterdir() if p.is_file() and p.suffix.lower() == ".pdf")

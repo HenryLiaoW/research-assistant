@@ -19,11 +19,6 @@ import documents
 import retrieval
 
 
-def pdf_files(docs_dir: Path) -> list:
-    """docs 目录里的 PDF，按文件名排序。用后缀判断，大小写都认。"""
-    return sorted(p for p in docs_dir.iterdir() if p.is_file() and p.suffix.lower() == ".pdf")
-
-
 def print_report(parsed: dict) -> None:
     s = documents.summarize(parsed)
     print(f"\n=== {s['file']} ===")
@@ -80,7 +75,7 @@ def main() -> None:
     if not docs_dir.is_dir():
         print(f"资料目录不存在：{docs_dir}")
         return
-    files = pdf_files(docs_dir) #读取一个Path 输出一个列表，里面是这个文件夹里所有PDF文件的Path对象
+    files = documents.pdf_files(docs_dir) #读取一个Path 输出一个列表，里面是这个文件夹里所有PDF文件的Path对象
     # → [PosixPath('docs/dissertation.pdf'), PosixPath('docs/sample_protocol.pdf')]
     if not files:
         print(f"{docs_dir}/ 里没有 PDF")
@@ -113,6 +108,7 @@ def build_and_save(files: list, skip_sections=()) -> None:
     info = {"model": config.EMBEDDING_MODEL, "chunk_size": config.CHUNK_SIZE,
             "chunk_overlap": config.CHUNK_OVERLAP, "skip_sections": list(skip_sections),
             "files": sorted({c["file"] for c in chunks}),
+            "sources": retrieval.source_fingerprints(files),   # 每个资料文件的指纹（含解析失败的），检索前用来判断资料变没变
             "model_load_seconds": round(load_seconds, 1), "build_seconds": round(build_seconds, 1)}
     manifest = retrieval.save_index(config.INDEX_DIR, chunks, vectors, info)
     print(f"索引已写入 {config.INDEX_DIR}/：{manifest['chunks']} 个 chunk，向量长度 {manifest['dim']}，"

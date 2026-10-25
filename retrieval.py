@@ -3,8 +3,10 @@ retrieval.py — 向量索引（阶段 4c）：把 chunk 转成向量存到本�
 
 全部在本机运行，不调用任何模型 API。只有第一次加载嵌入模型时，会从 Hugging Face 下载模型文件。
 索引目录（config.INDEX_DIR）不进 git：里面有资料原文的片段。
+建索引时记下每个资料文件的 SHA-256 指纹；资料变了（新增、删除、内容改动），旧索引判为过期，要求重建。
 """
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +61,44 @@ def load_index(index_dir) -> tuple: # 加载索引
     if len(chunks) != len(vectors):
         raise ValueError(f"索引损坏：chunk 数（{len(chunks)}）和向量数（{len(vectors)}）不一致，请重建")
     return chunks, vectors, manifest
+
+
+def fingerprint(path) -> str:
+    """文件内容的 SHA-256。内容差一个字节，指纹就完全不同；只改修改时间、不改内容，指纹不变。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):     # 每次读 1 MB，大文件也不占内存
+            h.update(block)
+    return h.hexdigest()
+
+
+def source_fingerprints(files: list) -> dict:
+    """{文件名: 指纹}。谁调用：build_index（写进 manifest）、stale_reasons（算现在的）。"""
+    return {Path(p).name: fingerprint(p) for p in files}
+
+
+def stale_reasons(manifest: dict, files: list) -> list:
+    """对比建索引时记下的指纹和资料目录现在的文件，返回过期原因；空列表 = 索引和资料一致。"""
+    recorded = manifest.get("sources")
+    if recorded is None:
+        return ["索引建于加入资料指纹之前，无法确认资料有没有变"]
+    current = source_fingerprints(files)
+    reasons = [f"新增了 {name}" for name in sorted(current.keys() - recorded.keys())]
+    reasons += [f"删除了 {name}" for name in sorted(recorded.keys() - current.keys())]
+    reasons += [f"{name} 的内容变了" for name in sorted(current.keys() & recorded.keys())
+                if current[name] != recorded[name]]
+    return reasons
+
+
+def ensure_fresh(index_dir, files: list) -> None:
+    """检索前的检查：索引不存在、或资料和建索引时不一致，就报错并提示重建。
+    只读 manifest.json，不加载向量和模型，所以很快。谁调用：tools._get_searcher()、eval_retrieval.main()。"""
+    path = Path(index_dir) / "manifest.json"
+    if not path.exists():
+        raise FileNotFoundError(f"索引不存在：{index_dir}/，请先运行 python build_index.py")
+    reasons = stale_reasons(json.loads(path.read_text(encoding="utf-8")), files)
+    if reasons:
+        raise ValueError("索引已过期：" + "；".join(reasons) + "。请重新运行 python build_index.py")
 
 
 class DocumentSearch:

@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
+import documents
 import retrieval
 
 DEFAULT_QUESTIONS = "eval/retrieval_questions.json"   # 开发集：迭代时用
@@ -81,6 +82,10 @@ def main() -> None:
     questions_path = Path(args.questions)
     questions = json.loads(questions_path.read_text(encoding="utf-8"))
     print(f"题目：{questions_path}（{len(questions)} 题）")
+    try:
+        retrieval.ensure_fresh(config.INDEX_DIR, documents.pdf_files(config.DOCS_DIR))   # 资料变了还用旧索引，分数没有意义
+    except (FileNotFoundError, ValueError) as e:
+        raise SystemExit(str(e))
     print(f"加载嵌入模型 {config.EMBEDDING_MODEL} 和索引 {config.INDEX_DIR}/ ……")
     searcher = retrieval.DocumentSearch(config.INDEX_DIR, retrieval.Embedder(config.EMBEDDING_MODEL))
     m = searcher.manifest

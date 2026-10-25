@@ -12,10 +12,10 @@ tools.py — 工具箱：工具的"菜单"（给模型看的 JSON Schema）和"�
 import json
 import math
 import statistics
-from pathlib import Path
 
 import config
 import csv_tools
+import documents
 import memory
 import retrieval
 
@@ -237,11 +237,10 @@ _searcher = None
 
 
 def _get_searcher():
-    """懒加载检索器。先检查索引在不在，避免没建索引时白白加载模型。"""
+    """懒加载检索器。先检查索引在不在、资料变没变，不通过就直接报错，不白白加载模型（约 10 秒）。"""
     global _searcher
     if _searcher is None:
-        if not (Path(config.INDEX_DIR) / "manifest.json").exists():
-            raise FileNotFoundError(f"索引不存在：{config.INDEX_DIR}/，请先运行 python build_index.py")
+        retrieval.ensure_fresh(config.INDEX_DIR, documents.pdf_files(config.DOCS_DIR))
         _searcher = retrieval.DocumentSearch(config.INDEX_DIR, retrieval.Embedder(config.EMBEDDING_MODEL))
     return _searcher
 
@@ -265,7 +264,7 @@ def search_documents(query, k=None) -> dict:
         return {"ok": False, "error": f"k 必须是 1 到 {config.MAX_SEARCH_K} 之间的整数，收到 {k!r}"}
     try:
         searcher = _get_searcher()
-    except (FileNotFoundError, ValueError) as e:     # 没建索引 / 索引和当前模型不一致
+    except (FileNotFoundError, ValueError) as e:     # 没建索引 / 资料变了 / 索引和当前模型不一致
         return {"ok": False, "error": str(e)}
     results = searcher.search(query.strip(), k) # 核心代码
     return {
