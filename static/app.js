@@ -1,5 +1,6 @@
 /*
  * 网页前端（阶段 5b）：发消息 → 每 400 毫秒查一次进度 → 显示执行步骤、确认弹窗、最终回答。
+ * 阶段 5c：侧边栏三个页签——原文（点 [E1] 看片段原文）、记忆（查看和删除长期记忆）、资料（PDF、索引、CSV 的状态）。
  * 安全：模型和工具返回的文字一律先转义再显示（escapeHtml），不直接当 HTML 插入页面。
  */
 
@@ -19,6 +20,8 @@ const TOOL_NAMES = {
 let sessionId = null;
 let busy = false;
 let modalJob = null;        // 正在等待确认的任务编号；null 表示弹窗没开
+const answers = [];         // 每条回答自己的证据 {cites, evidence}；回答里的 [E1] 带着下标，点开时找回自己那一份
+const panel = { tab: null, answer: null, id: null };   // 侧边栏当前页签（null = 关着）和正在看的证据
 
 // ---------- 和后端通信 ----------
 
@@ -37,33 +40,34 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-function citeChip(id, cites) {
-  const src = cites[id];
-  const title = src ? `${src.file} 第 ${src.page} 页${src.section ? " · " + src.section : ""}` : "这个编号不在检索结果里";
-  return `<button type="button" class="cite${src ? "" : " invalid"}" data-id="${id}" title="${escapeHtml(title)}">${id}</button>`;
+// ctx = {cites: 这条回答的有效引用, answer: 这条回答在 answers 里的下标}
+function citeChip(id, ctx) {
+  const src = ctx.cites[id];
+  const title = src ? `${src.file} 第 ${src.page} 页${src.section ? " · " + src.section : ""}（点击看原文）` : "这个编号不在检索结果里";
+  return `<button type="button" class="cite${src ? "" : " invalid"}" data-id="${id}" data-answer="${ctx.answer}" title="${escapeHtml(title)}">${id}</button>`;
 }
 
-function inline(text, cites) {
+function inline(text, ctx) {
   let h = escapeHtml(text);
   h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
   // [E1]、[E1][E3]、[E2，E5] 都变成可点的小标签
-  h = h.replace(/\[(E\d+(?:\s*[,，、]\s*E\d+)*)\]/g, (_, ids) => ids.split(/\s*[,，、]\s*/).map((id) => citeChip(id, cites)).join(""));
+  h = h.replace(/\[(E\d+(?:\s*[,，、]\s*E\d+)*)\]/g, (_, ids) => ids.split(/\s*[,，、]\s*/).map((id) => citeChip(id, ctx)).join(""));
   return h;
 }
 
 const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
 const isListItem = (line) => /^\s*([-*]|\d+\.)\s+/.test(line);
 
-function renderTable(rows, cites) {
+function renderTable(rows, ctx) {
   const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
   const data = rows.map(cells).filter((c) => !c.every((x) => /^:?-{2,}:?$/.test(x)));   // 去掉 |---| 分隔行
   const [head, ...body] = data;
-  const tr = (cs, tag) => `<tr>${cs.map((c) => `<${tag}>${inline(c, cites)}</${tag}>`).join("")}</tr>`;
+  const tr = (cs, tag) => `<tr>${cs.map((c) => `<${tag}>${inline(c, ctx)}</${tag}>`).join("")}</tr>`;
   return `<div class="table-wrap"><table><thead>${tr(head, "th")}</thead><tbody>${body.map((r) => tr(r, "td")).join("")}</tbody></table></div>`;
 }
 
-function renderMarkdown(text, cites) {
+function renderMarkdown(text, ctx) {
   const lines = String(text).replace(/\r/g, "").split("\n");
   const out = [];
   let i = 0;
@@ -73,19 +77,19 @@ function renderMarkdown(text, cites) {
     if (isTableRow(line)) {
       const rows = [];
       while (i < lines.length && isTableRow(lines[i])) rows.push(lines[i++]);
-      out.push(renderTable(rows, cites));
+      out.push(renderTable(rows, ctx));
     } else if (isListItem(line)) {
       const tag = /^\s*\d+\./.test(line) ? "ol" : "ul";
       const items = [];
       while (i < lines.length && isListItem(lines[i])) items.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
-      out.push(`<${tag}>${items.map((t) => `<li>${inline(t, cites)}</li>`).join("")}</${tag}>`);
+      out.push(`<${tag}>${items.map((t) => `<li>${inline(t, ctx)}</li>`).join("")}</${tag}>`);
     } else if (/^#{1,6}\s/.test(line)) {
-      out.push(`<p class="h">${inline(line.replace(/^#+\s*/, ""), cites)}</p>`);
+      out.push(`<p class="h">${inline(line.replace(/^#+\s*/, ""), ctx)}</p>`);
       i++;
     } else {
       const para = [];
       while (i < lines.length && lines[i].trim() && !isTableRow(lines[i]) && !isListItem(lines[i])) para.push(lines[i++]);
-      out.push(`<p>${para.map((l) => inline(l, cites)).join("<br>")}</p>`);
+      out.push(`<p>${para.map((l) => inline(l, ctx)).join("<br>")}</p>`);
     }
   }
   return out.join("");
@@ -178,10 +182,11 @@ function showProgress(card, snap) {
 function showAnswer(card, snap) {
   const res = snap.result;
   const cites = Object.fromEntries(res.citations.map((c) => [c.id, c]));
-  let html = `<div class="answer">${renderMarkdown(res.answer_raw || "（没有回答）", cites)}</div>`;
+  const ctx = { cites, answer: answers.push({ cites, evidence: res.evidence || [] }) - 1 };
+  let html = `<div class="answer">${renderMarkdown(res.answer_raw || "（没有回答）", ctx)}</div>`;
   if (res.citations.length) {
     html += `<div class="sources">` + res.citations.map((c) =>
-      `<div>${citeChip(c.id, cites)}${escapeHtml(c.file)} 第 ${c.page} 页${c.label ? `（印刷页 ${escapeHtml(c.label)}）` : ""}${c.section ? " · " + escapeHtml(c.section) : ""}</div>`).join("") + `</div>`;
+      `<div>${citeChip(c.id, ctx)}${escapeHtml(c.file)} 第 ${c.page} 页${c.label ? `（印刷页 ${escapeHtml(c.label)}）` : ""}${c.section ? " · " + escapeHtml(c.section) : ""}</div>`).join("") + `</div>`;
   }
   if (res.invalid_citations.length) html += `<div class="notice">回答引用了检索结果里没有的编号：${res.invalid_citations.map(escapeHtml).join("、")}</div>`;
   if (res.uncited) html += `<div class="notice">这次检索了资料，但回答没有标注证据编号</div>`;
@@ -193,6 +198,156 @@ function showAnswer(card, snap) {
 
 function showError(card, message) {
   card.innerHTML = `<div class="notice error">${escapeHtml(message)}</div>`;
+}
+
+// ---------- 侧边栏：原文 / 记忆 / 资料 ----------
+
+function markOpenTab() {                                  // 页签和顶栏按钮都标出当前打开的是哪一页
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === panel.tab)));
+  $("#open-memory").classList.toggle("active", panel.tab === "memory");
+  $("#open-sources").classList.toggle("active", panel.tab === "sources");
+}
+
+function openPanel(tab) {
+  panel.tab = tab;
+  $("#panel").hidden = false;
+  $(".layout").classList.add("with-panel");
+  markOpenTab();
+  if (tab === "evidence") renderEvidence();
+  if (tab === "memory") loadMemories();
+  if (tab === "sources") loadSources();
+}
+
+function closePanel() {
+  panel.tab = null;
+  $("#panel").hidden = true;
+  $(".layout").classList.remove("with-panel");
+  markOpenTab();
+}
+
+function togglePanel(tab) { panel.tab === tab ? closePanel() : openPanel(tab); }
+
+function setPanelBody(html) { $("#panel-body").innerHTML = html; }
+
+function panelError(tab, message) {
+  if (panel.tab === tab) setPanelBody(`<div class="notice error">${escapeHtml(message)}</div>`);
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return escapeHtml(iso ?? "");
+  return d.toLocaleString("zh-CN", { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtSize(n) {
+  return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+// 原文：数据就在这条回答的结果里（后端随回答一起返回），不用再请求
+function showEvidence(answer, id) {
+  panel.answer = answer;
+  panel.id = id;
+  openPanel("evidence");
+}
+
+function renderEvidence() {
+  const a = answers[panel.answer];
+  if (!a) return setPanelBody(`<p class="hint">点回答里的 <span class="cite static">E1</span> 这样的编号，在这里看对应的原文片段。</p>`);
+  const e = a.evidence.find((x) => x.id === panel.id);
+  let html = e ? `
+    <div class="ev-title"><span class="cite static">${escapeHtml(e.id)}</span>${escapeHtml(e.file)}</div>
+    <div class="ev-meta">第 ${escapeHtml(e.page)} 页${e.label ? `（印刷页 ${escapeHtml(e.label)}）` : ""}${e.section ? " · " + escapeHtml(e.section) : ""}</div>
+    <div class="ev-meta">检索词「${escapeHtml(e.query ?? "")}」 · 相似度 ${escapeHtml(e.score)}
+      <span class="tag${e.cited ? " cited" : ""}">${e.cited ? "回答引用了这段" : "检索到，但回答没有引用"}</span></div>
+    <blockquote class="passage">${escapeHtml(e.text ?? "")}</blockquote>
+    <p class="hint">这是检索时交给模型的原文片段，不是整页。文件名和页码由程序按片段出处填写，不是模型写的。</p>`
+    : `<div class="notice error">${escapeHtml(panel.id)} 不在检索结果里：回答引用了一个不存在的编号，程序已把它标为无效引用。</div>`;
+  if (a.evidence.length > 1 || (!e && a.evidence.length)) {
+    html += `<div class="panel-subtitle">这条回答用到的片段</div><div class="ev-list">` + a.evidence.map((x) => `
+      <button type="button" class="ev-item${x.id === panel.id ? " active" : ""}" data-action="evidence" data-id="${escapeHtml(x.id)}">
+        <span class="cite static">${escapeHtml(x.id)}</span>
+        <span class="ev-item-text">${escapeHtml(x.file)} 第 ${escapeHtml(x.page)} 页 · ${escapeHtml(x.score)}</span>
+        <span class="tag${x.cited ? " cited" : ""}">${x.cited ? "已引用" : "未引用"}</span>
+      </button>`).join("") + `</div>`;
+  }
+  setPanelBody(html);
+}
+
+// 记忆：查看、删除（删除前在这一行里再确认一次）
+async function loadMemories() {
+  setPanelBody(`<p class="hint">加载中…</p>`);
+  try {
+    const { memories } = await api("/api/memories");
+    if (panel.tab === "memory") setPanelBody(memoriesHtml(memories));
+  } catch (e) {
+    panelError("memory", e.message);
+  }
+}
+
+function memoriesHtml(list) {
+  const items = list.slice().reverse().map((m) => `
+    <div class="mem" data-id="${escapeHtml(m.id)}">
+      <div class="mem-text">${escapeHtml(m.content)}</div>
+      <div class="mem-meta"><span>#${escapeHtml(m.id)} · ${fmtTime(m.created_at)}</span>
+        <button type="button" class="link danger" data-action="ask-delete">删除</button></div>
+      <div class="mem-confirm" hidden>
+        <span>确定删除这条记忆？</span>
+        <button type="button" class="btn ghost small" data-action="cancel-delete">取消</button>
+        <button type="button" class="btn danger small" data-action="delete">删除</button>
+      </div>
+    </div>`).join("");
+  return `<div class="panel-subtitle">长期记忆 · ${list.length} 条（新的在前）</div>` +
+    (items || `<p class="hint">还没有长期记忆。在对话里说"记住：……"，你确认后会出现在这里。</p>`) +
+    `<p class="hint">写入只能通过对话，每次都要你确认。删除是软删除：数据库里保留记录并标为已删除，助手之后查不到它。</p>`;
+}
+
+async function deleteMemory(row) {
+  try {
+    await api(`/api/memories/${encodeURIComponent(row.dataset.id)}`, { method: "DELETE" });
+    loadMemories();
+  } catch (e) {
+    row.querySelector(".mem-confirm").innerHTML = `<span class="fail">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+// 资料：PDF 有没有进索引、索引是否过期、data/ 里有哪些表
+async function loadSources() {
+  setPanelBody(`<p class="hint">加载中…</p>`);
+  try {
+    const s = await api("/api/sources");
+    if (panel.tab === "sources") setPanelBody(sourcesHtml(s));
+  } catch (e) {
+    panelError("sources", e.message);
+  }
+}
+
+function sourcesHtml(s) {
+  const idx = s.index;
+  const [cls, label] = !idx.exists ? ["error", "没有索引"] : idx.stale.length ? ["warn", "索引已过期"] : ["ok", "索引和资料一致"];
+  const model = s.search_error ? `<span class="fail">不可用</span>` : s.search_ready ? "已加载" : "加载中…";
+  const files = (list, meta) => `<ul class="files">${list.map((f) =>
+    `<li><span class="file-name">${escapeHtml(f.name)}</span><span class="file-meta">${meta(f)}</span></li>`).join("")}</ul>`;
+
+  let html = `<div class="state ${cls}">${label}</div>`;
+  if (idx.stale.length) {
+    html += `<ul class="stale">${idx.stale.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>`;
+    if (idx.exists) html += `<p class="hint">在项目目录运行 <code>python build_index.py</code> 重建索引，然后重启网页服务。</p>`;
+  }
+  html += `<div class="panel-subtitle">论文和协议 · docs/</div>`;
+  html += s.docs.length
+    ? files(s.docs, (d) => `${d.chunks ? `${d.chunks} 段` : `<span class="fail">未建索引</span>`} · ${fmtSize(d.size_bytes)}`)
+    : `<p class="hint">docs/ 里还没有 PDF。</p>`;
+  html += `<dl class="kv">`;
+  if (idx.exists) {
+    html += `<dt>嵌入模型</dt><dd>${escapeHtml(idx.model)}</dd><dt>建立时间</dt><dd>${fmtTime(idx.built_at)}</dd>
+      <dt>片段数</dt><dd>${escapeHtml(idx.chunks)} 段${idx.chunk_size ? `，每段最多 ${escapeHtml(idx.chunk_size)} 字符` : ""}</dd>`;
+  }
+  html += `<dt>检索模型</dt><dd>${model}</dd></dl>`;
+  if (s.search_error) html += `<div class="notice error">${escapeHtml(s.search_error)}</div>`;
+  html += `<div class="panel-subtitle">实验数据 · data/</div>`;
+  html += s.data_files.length ? files(s.data_files, (f) => fmtSize(f.size_bytes)) : `<p class="hint">data/ 里还没有 CSV。</p>`;
+  html += `<p class="hint">检索在本机完成。发给模型 API 的是对话内容和工具结果（检索到的片段、统计结果、记忆）；整篇 PDF 和 CSV 的原始行不会发出去。</p>`;
+  return html;
 }
 
 // ---------- 确认弹窗 ----------
@@ -225,7 +380,11 @@ async function poll(jobId, card) {
     const snap = await api(`/api/jobs/${jobId}`);
     if (snap.status === "waiting_confirm" && snap.pending && modalJob !== jobId) openModal(jobId, snap.pending);
     if (snap.status !== "waiting_confirm" && modalJob === jobId) closeModal();   // 超时后后端已按拒绝处理
-    if (snap.status === "done") return showAnswer(card, snap);
+    if (snap.status === "done") {
+      showAnswer(card, snap);
+      if (panel.tab === "memory") loadMemories();         // 这条消息可能刚写入或删除了记忆
+      return;
+    }
     if (snap.status === "error") return showError(card, snap.error);
     showProgress(card, snap);
     await sleep(POLL_MS);
@@ -307,7 +466,37 @@ document.querySelectorAll(".example").forEach((b) => b.addEventListener("click",
 $("#new-chat").addEventListener("click", newChat);
 $("#modal-yes").addEventListener("click", () => answerModal(true));
 $("#modal-no").addEventListener("click", () => answerModal(false));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && modalJob) answerModal(false); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (modalJob) answerModal(false);                       // 弹窗优先：Esc 等于"取消"
+  else if (panel.tab) closePanel();
+});
+$("#messages").addEventListener("click", (e) => {           // 点回答里的 [E1] → 侧边栏看原文
+  const chip = e.target.closest(".cite[data-answer]");
+  if (chip) showEvidence(Number(chip.dataset.answer), chip.dataset.id);
+});
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => openPanel(t.dataset.tab)));
+$("#panel-close").addEventListener("click", closePanel);
+$("#open-memory").addEventListener("click", () => togglePanel("memory"));
+$("#open-sources").addEventListener("click", () => togglePanel("sources"));
+$("#status").addEventListener("click", () => openPanel("sources"));
+$("#panel-body").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const row = btn.closest(".mem");
+  const action = btn.dataset.action;
+  if (action === "evidence") { panel.id = btn.dataset.id; renderEvidence(); }
+  if (action === "ask-delete") {
+    btn.hidden = true;
+    row.querySelector(".mem-confirm").hidden = false;
+    row.querySelector('[data-action="cancel-delete"]').focus();          // 默认焦点在"取消"
+  }
+  if (action === "cancel-delete") {
+    row.querySelector(".mem-confirm").hidden = true;
+    row.querySelector('[data-action="ask-delete"]').hidden = false;
+  }
+  if (action === "delete") deleteMemory(row);
+});
 // 展开"执行过程"时，让它完整出现在视野里（最后一条消息展开后常被输入框挡住）
 document.addEventListener("toggle", (e) => {
   if (e.target.matches?.("details.steps") && e.target.open) e.target.scrollIntoView({ block: "nearest" });

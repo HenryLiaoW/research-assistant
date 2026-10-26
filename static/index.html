@@ -16,7 +16,9 @@
       </div>
     </div>
     <div class="top-actions">
-      <span id="status" class="status loading">检索模型加载中…</span>
+      <button id="status" class="status loading" type="button" title="查看资料和索引">检索模型加载中…</button>
+      <button id="open-sources" class="btn ghost" type="button">资料</button>
+      <button id="open-memory" class="btn ghost" type="button">记忆</button>
       <button id="new-chat" class="btn ghost" type="button">新对话</button>
     </div>
   </header>
@@ -42,6 +44,18 @@
         <button id="send" class="btn primary" type="submit">发送</button>
       </form>
     </main>
+
+    <aside id="panel" class="panel" hidden aria-label="侧边栏">
+      <div class="panel-head">
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" role="tab" data-tab="evidence">原文</button>
+          <button type="button" class="tab" role="tab" data-tab="memory">记忆</button>
+          <button type="button" class="tab" role="tab" data-tab="sources">资料</button>
+        </div>
+        <button id="panel-close" class="icon-btn" type="button" aria-label="关闭侧边栏">×</button>
+      </div>
+      <div id="panel-body" class="panel-body"></div>
+    </aside>
   </div>
 
   <div id="modal" class="modal" hidden>

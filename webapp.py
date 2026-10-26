@@ -10,6 +10,9 @@ webapp.py — 网页界面的后端（阶段 5）：把 run_agent 包成几个 H
     POST /api/jobs/<job_id>/confirm 对待确认的写操作作答 {"approve": true / false}
     POST /api/sessions/reset        开始新对话 {"session_id"?} → {"session_id"}
     GET  /api/status                检索模型是否加载好、现在是否在忙
+    GET  /api/memories              记忆面板：全部有效记忆
+    DELETE /api/memories/<id>       记忆面板：删除一条（软删除）。页面上先让用户再点一次确认才发这个请求
+    GET  /api/sources               资料面板：docs/ 里的 PDF、索引是否过期、data/ 里的 CSV
 
 怎么运行一条消息：接口立刻返回 job_id，run_agent 在后台线程里跑，页面每隔半秒查一次进度。
 - 执行步骤：run_agent 边做边往记录本（trace）里记模型调用和工具调用，查进度时直接读它，agent.py 不用为网页改。
@@ -17,7 +20,12 @@ webapp.py — 网页界面的后端（阶段 5）：把 run_agent 包成几个 H
   和 chat.py 用的是同一个回调接口，只是"怎么问用户"从终端 input 换成了网页弹窗。
 - 同一时间只处理一条消息（本机单用户演示），也避免多个线程同时用嵌入模型和数据库。启动时后台预热检索模型。
 
-安全：只监听 127.0.0.1；API 密钥只在服务端读取，不出现在任何接口返回里；不开调试模式。
+回答里的证据（5c）：结果里带上这次回答检索到和引用到的片段原文，点 [E1] 在侧边栏看。
+原文就是当时交给模型的那段文字，本来就在服务端的会话历史里，只返回给本机页面，不会多发给模型 API。
+
+安全：只监听 127.0.0.1，并且只接受 Host 为 127.0.0.1 / localhost 的请求（防 DNS 重绑定：恶意网页把自己的域名
+解析到 127.0.0.1 后，浏览器发来的 Host 仍是那个域名）；API 密钥只在服务端读取，不出现在任何接口返回里；不开调试模式。
+改数据的接口用 POST / DELETE 并且只收 JSON，别的网页没法用一个链接或图片偷偷触发。
 会话历史只在内存里，重启即清空（和 chat.py 一样）。发给模型 API 的内容和 chat.py 相同；运行日志照常写进 logs/。
 """
 
@@ -33,12 +41,16 @@ from openai import OpenAIError
 import agent
 import citations
 import config
+import csv_tools
+import documents
+import retrieval
 import tools
 import tracing
 from llm_client import build_client, describe_api_error, load_api_key
 
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_JOBS = 50           # 最多保留多少条消息的处理记录（超过就丢掉最早的）
+LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 
 
 class Session:
@@ -89,6 +101,16 @@ class Job:
                 "pending": self.pending, "result": self.result, "error": self.error}
 
 
+def answer_evidence(history: list, cited: list) -> list:
+    """一条回答的证据清单：这一轮检索到的片段 + 回答引用的片段（可能是前几轮检索到的），按编号排序，带原文。
+    谁调用：run_job()。存进这条回答自己的结果里：之后会话再长、旧消息被裁剪，这条回答的 [E1] 也还指向原来那段。"""
+    last_user = max(i for i, m in enumerate(history) if m["role"] == "user")
+    this_turn = citations.collect_passages(history[last_user:])
+    known = citations.collect_passages(history)
+    ids = sorted(set(this_turn) | {e for e in cited if e in known}, key=lambda e: int(e[1:]))
+    return [{"id": e, **known[e], "cited": e in cited} for e in ids]
+
+
 def create_app(client, confirm_timeout=None, warmup=True) -> Flask:
     """client 是模型客户端（测试时传假客户端）；warmup=True 时后台预热检索模型。"""
     app = Flask(__name__, static_folder=None)
@@ -116,6 +138,7 @@ def create_app(client, confirm_timeout=None, warmup=True) -> Flask:
             evidence = citations.collect_evidence(history)
             job.result = {"status": result.status, "answer": result.answer, "answer_raw": history[-1]["content"],
                           "citations": [{"id": e, **evidence[e]} for e in result.citations],
+                          "evidence": answer_evidence(history, result.citations),
                           "invalid_citations": result.invalid_citations, "uncited": result.uncited}
             job.status = "done"
         except OpenAIError as e:
@@ -134,6 +157,12 @@ def create_app(client, confirm_timeout=None, warmup=True) -> Flask:
         with state["busy"]:
             r = tools.search_documents("warm up")
         state["search_ready"], state["search_error"] = r["ok"], (None if r["ok"] else r["error"])
+
+    @app.before_request
+    def only_local_host():
+        if request.host.rsplit(":", 1)[0] not in LOCAL_HOSTS:
+            return jsonify(error="只接受通过 127.0.0.1 或 localhost 访问"), 403
+        return None
 
     @app.get("/")
     def index():
@@ -190,6 +219,35 @@ def create_app(client, confirm_timeout=None, warmup=True) -> Flask:
         if not job.answer(approve):
             return jsonify(error="现在没有等待确认的写操作"), 409
         return jsonify(ok=True)
+
+    @app.get("/api/memories")
+    def memories():
+        return jsonify(memories=tools.list_memories())
+
+    @app.delete("/api/memories/<int:memory_id>")
+    def delete_memory(memory_id):
+        """用户在记忆面板里删除。和对话里的写操作抢同一把锁：不会和正在跑的 Agent 同时改数据库。"""
+        if not state["busy"].acquire(blocking=False):
+            return jsonify(error="正在忙（加载检索模型或处理消息），稍后再删"), 409
+        try:
+            r = tools.forget_memory(memory_id)
+        finally:
+            state["busy"].release()
+        if not r["ok"]:
+            return jsonify(error=r["error"]), 404
+        return jsonify(ok=True, id=memory_id)
+
+    @app.get("/api/sources")
+    def sources():
+        """资料面板。只返回文件名、大小、段数和索引信息，不返回资料内容；不加载模型，但会重算 PDF 指纹（很快）。"""
+        files = documents.pdf_files(config.DOCS_DIR)
+        idx = retrieval.index_status(config.INDEX_DIR, files)
+        csv = csv_tools.list_files(config.DATA_DIR)
+        return jsonify(docs=[{"name": p.name, "size_bytes": p.stat().st_size, "chunks": idx["per_file"].get(p.name, 0)}
+                             for p in files],
+                       index={k: idx.get(k) for k in ("exists", "model", "built_at", "chunks", "chunk_size", "stale")},
+                       data_files=csv.get("files", []),
+                       search_ready=state["search_ready"], search_error=state["search_error"])
 
     @app.post("/api/sessions/reset")
     def reset():

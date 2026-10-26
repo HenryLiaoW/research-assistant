@@ -221,14 +221,19 @@ def describe_write(name: str, args_json: str) -> str:
             memory_id = int(args.get("memory_id"))
         except (TypeError, ValueError):
             return f"删除长期记忆 #{args.get('memory_id')}（编号无效）"
-        found = next((m for m in memory.list_all(_memory_conn) if m["id"] == memory_id), None)
+        found = next((m for m in list_memories() if m["id"] == memory_id), None)
         return f"删除长期记忆 #{memory_id}：" + (f"「{found['content']}」" if found else "（没有找到这条有效记忆）")
     return f"执行 {name}（参数 {args_json}）"
 
 
 def forget_memory(memory_id) -> dict:
-    """软删除。谁调用：run_tool()。输入：id。输出：ok；id 不存在或已删则 ok=False。"""
+    """软删除。谁调用：run_tool()、webapp.py（记忆面板）。输入：id。输出：ok；id 不存在或已删则 ok=False。"""
     return memory.forget(_memory_conn, memory_id)
+
+
+def list_memories() -> list:
+    """全部有效记忆。不是模型工具（不在 TOOL_IMPLEMENTATIONS 里），谁调用：describe_write()、webapp.py（记忆面板）。"""
+    return memory.list_all(_memory_conn)
 
 
 

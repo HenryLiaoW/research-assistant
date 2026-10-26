@@ -16,9 +16,8 @@ import re
 _CITATION = re.compile(r"\[\s*(E\d+(?:\s*[,，、]\s*E\d+)*)\s*\]")   # [E1]、[E1, E3]、[E2，E5]
 
 
-def collect_evidence(messages: list) -> dict:
-    """从历史里的工具结果收集已编号的证据：{"E1": {chunk_id, file, page, label, section}, ...}。"""
-    evidence = {}
+def _numbered_results(messages: list):
+    """逐个给出历史里已编号的检索结果：(那次检索的工具结果, 其中一个片段)。"""
     for m in messages:
         if m.get("role") != "tool":
             continue
@@ -30,8 +29,21 @@ def collect_evidence(messages: list) -> dict:
             continue
         for r in data["results"]:
             if isinstance(r, dict) and "evidence_id" in r:
-                evidence[r["evidence_id"]] = {k: r.get(k) for k in ("chunk_id", "file", "page", "label", "section")}
-    return evidence
+                yield data, r
+
+
+def collect_evidence(messages: list) -> dict:
+    """从历史里的工具结果收集已编号的证据：{"E1": {chunk_id, file, page, label, section}, ...}。"""
+    return {r["evidence_id"]: {k: r.get(k) for k in ("chunk_id", "file", "page", "label", "section")}
+            for _, r in _numbered_results(messages)}
+
+
+def collect_passages(messages: list) -> dict:
+    """和 collect_evidence 一样，但多带原文、相似度和检索词。谁调用：webapp.py（侧边栏"看原文"）。
+    原文就是当时作为工具结果交给模型的那段文字，不重新去索引里查。"""
+    return {r["evidence_id"]: {**{k: r.get(k) for k in ("chunk_id", "file", "page", "label", "section")},
+                               "score": r.get("score"), "text": r.get("text"), "query": data.get("query")}
+            for data, r in _numbered_results(messages)}
 
 
 def assign_ids(results: list, messages: list) -> None:

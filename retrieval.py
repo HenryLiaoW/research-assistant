@@ -101,6 +101,24 @@ def ensure_fresh(index_dir, files: list) -> None:
         raise ValueError("索引已过期：" + "；".join(reasons) + "。请重新运行 python build_index.py")
 
 
+def index_status(index_dir, files: list) -> dict:
+    """索引的概况，给网页的"资料"面板：在不在、怎么建的、每个文件切成了几段、和资料目录是否一致。
+    只读 manifest.json 和 chunks.jsonl，不加载向量和模型。谁调用：webapp.py。"""
+    d = Path(index_dir)
+    if not (d / "manifest.json").exists():
+        return {"exists": False, "per_file": {}, "stale": ["索引不存在，请先运行 python build_index.py"]}
+    manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    per_file = {}
+    if (d / "chunks.jsonl").exists():
+        with open(d / "chunks.jsonl", encoding="utf-8") as f:
+            for line in f:
+                name = json.loads(line).get("file")
+                per_file[name] = per_file.get(name, 0) + 1
+    return {"exists": True, "model": manifest.get("model"), "built_at": manifest.get("built_at"),
+            "chunks": manifest.get("chunks"), "chunk_size": manifest.get("chunk_size"),
+            "per_file": per_file, "stale": stale_reasons(manifest, files)}
+
+
 class DocumentSearch:
     """检索：读入本地索引，把问题转成向量，返回最相近的 k 个 chunk（带出处和相似度）。
     建一次、查多次：索引只在创建时读一次，之后每次 search 只需要把问题转成向量。"""
