@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI 实验研究助手</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">研</span>
+      <div>
+        <h1>AI 实验研究助手</h1>
+        <p class="tagline">数字由工具计算 · 页码由程序生成 · 写记忆需你确认</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="status" class="status loading">检索模型加载中…</span>
+      <button id="new-chat" class="btn ghost" type="button">新对话</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <main class="chat">
+      <div id="messages" class="messages" aria-live="polite">
+        <section id="empty" class="empty">
+          <h2>问论文、问实验数据，或者让我记住一件事</h2>
+          <p>资料库里是你的论文和实验协议，data/ 目录里是实验结果表。试试这些：</p>
+          <div class="examples">
+            <button type="button" class="example">论文里预训练跑了多少轮？</button>
+            <button type="button" class="example">sample_results.csv 里不同 config 的 c_index 平均是多少？</button>
+            <button type="button" class="example">记住：下次实验用 seed 42</button>
+            <button type="button" class="example">论文里用的 GPU 型号是什么？</button>
+          </div>
+        </section>
+      </div>
+
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" maxlength="2000"
+                  placeholder="输入问题，Enter 发送"></textarea>
+        <button id="send" class="btn primary" type="submit">发送</button>
+      </form>
+    </main>
+  </div>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">确认写入长期记忆</h2>
+      <p id="modal-detail" class="modal-detail"></p>
+      <p class="muted small">这是写操作，必须由你确认才会执行；120 秒内不确认，按"取消"处理。</p>
+      <div class="modal-actions">
+        <button id="modal-no" class="btn ghost" type="button">取消</button>
+        <button id="modal-yes" class="btn primary" type="button">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
