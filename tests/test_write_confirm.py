@@ -43,5 +43,36 @@ class WriteConfirmTest(unittest.TestCase):
         self.assertEqual(r.tool_calls, 1)
 
 
+class DescribeWriteTest(unittest.TestCase):
+    """确认时给用户看的那句话。"""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        import memory
+        import tools
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.conn = memory.connect(str(Path(tmp.name) / "m.sqlite3"))
+        memory.save(self.conn, "下次实验用 seed 42")
+        p = patch.object(tools, "_memory_conn", self.conn)
+        p.start()
+        self.addCleanup(p.stop)
+        self.tools = tools
+
+    def test_forget_shows_the_memory_text(self):
+        detail = self.tools.describe_write("forget_memory", '{"memory_id": 1}')
+        self.assertIn("下次实验用 seed 42", detail)                     # 不只显示编号，用户知道删的是哪一条
+
+    def test_unknown_or_bad_id(self):
+        self.assertIn("没有找到", self.tools.describe_write("forget_memory", '{"memory_id": 99}'))
+        self.assertIn("编号无效", self.tools.describe_write("forget_memory", '{"memory_id": "abc"}'))
+
+    def test_ctrl_d_at_prompt_means_no(self):
+        import chat
+        with patch("builtins.input", side_effect=EOFError), patch("builtins.print"):
+            self.assertFalse(chat.confirm_write("save_memory", '{"content": "x"}'))   # 不再让程序崩溃退出
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -205,6 +205,27 @@ def search_memory(keyword) -> dict:
     return memory.search(_memory_conn, keyword, limit=config.MEMORY_SEARCH_LIMIT)
 
 
+def describe_write(name: str, args_json: str) -> str:
+    """把一次写操作说成给用户看的一句话，确认时显示。谁调用：chat.confirm_write()、webapp.py。
+    删除时把这条记忆的原文也查出来：只显示编号的话，用户不知道删的是哪一条。"""
+    try:
+        args = json.loads(args_json)
+    except (TypeError, json.JSONDecodeError):
+        args = None
+    if not isinstance(args, dict):
+        args = {}
+    if name == "save_memory":
+        return f"保存一条长期记忆：「{args.get('content')}」"
+    if name == "forget_memory":
+        try:
+            memory_id = int(args.get("memory_id"))
+        except (TypeError, ValueError):
+            return f"删除长期记忆 #{args.get('memory_id')}（编号无效）"
+        found = next((m for m in memory.list_all(_memory_conn) if m["id"] == memory_id), None)
+        return f"删除长期记忆 #{memory_id}：" + (f"「{found['content']}」" if found else "（没有找到这条有效记忆）")
+    return f"执行 {name}（参数 {args_json}）"
+
+
 def forget_memory(memory_id) -> dict:
     """软删除。谁调用：run_tool()。输入：id。输出：ok；id 不存在或已删则 ok=False。"""
     return memory.forget(_memory_conn, memory_id)

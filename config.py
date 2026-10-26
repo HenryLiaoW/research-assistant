@@ -63,6 +63,12 @@ MAX_QUERY_CHARS = 500      # 检索词最长多少字符，防止模型把整段
 TRACE_ENABLED = True       # 每条请求在日志目录里追加一行 JSON（记什么、不记什么见 tracing.py 开头）；改成 False 关闭
 TRACE_DIR = "logs"         # 只在本机，已在 .gitignore 里
 
+# ---- 网页界面（阶段 5）----
+WEB_HOST = "127.0.0.1"     # 只在本机监听：别的电脑访问不到，API 密钥也只留在服务端
+WEB_PORT = 8000            # 不用 Flask 默认的 5000：macOS 的"隔空播放接收器"常占着它
+WEB_CONFIRM_TIMEOUT = 120  # 写操作等用户在网页上确认的最长秒数，超时按拒绝处理
+WEB_MAX_MESSAGE_CHARS = 2000   # 一条消息最长多少字
+
 # ---- 评估题翻译（阶段 4d 实验 2：中文问题先翻译成英文再检索）----
 # 会发给 API 的只有提示词和每道题的中文问题，不发送论文内容。翻译要稳定，所以温度为 0。
 TRANSLATE_TEMPERATURE = 0.0

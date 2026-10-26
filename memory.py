@@ -20,7 +20,9 @@ from datetime import datetime, timezone
 
 def connect(db_path: str) -> sqlite3.Connection:
     """打开（不存在则创建）数据库并确保表存在。谁调用：tools.py 启动时、chat.py、测试。"""
-    conn = sqlite3.connect(db_path)
+    # check_same_thread=False：网页版在后台线程里执行工具，连接是在主线程建的。
+    # webapp.py 保证同一时间只处理一条消息，不会有两个线程同时写。
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row  # 查询结果可以按列名取值：row["content"]
     conn.execute(
         """

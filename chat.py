@@ -19,32 +19,27 @@ search_documents 检索到的资料原文片段（每次最多 config.MAX_SEARCH
 不会发送整篇 PDF 或其他本机文件。
 """
 
-import json
 import time
 
 from openai import OpenAIError
 
 import config
 import memory
+import tools
 import tracing
 from agent import log, new_history, rollback_last_turn, run_agent
 from llm_client import build_client, describe_api_error, load_api_key
 
 
 def confirm_write(name: str, args_json: str) -> bool:
-    """写长期记忆前问用户。谁调用：run_agent（通过 confirm 参数）。只有输入 y 才执行。"""
+    """写长期记忆前问用户。谁调用：run_agent（通过 confirm 参数）。只有输入 y 才执行。
+    在提示处按 Ctrl-C / Ctrl-D 当作拒绝，而不是让整个程序崩溃退出。"""
     try:
-        args = json.loads(args_json)
-    except json.JSONDecodeError:
-        args = {}
-    if name == "save_memory":
-        what = f"保存一条长期记忆：「{args.get('content')}」"
-    elif name == "forget_memory":
-        what = f"删除长期记忆 #{args.get('memory_id')}"
-    else:
-        what = f"执行 {name}（参数 {args_json}）"
-    answer = input(f"[确认] 助手想要{what}。确认吗？(y/N) ").strip().lower()
-    return answer in ("y", "yes")
+        answer = input(f"[确认] 助手想要{tools.describe_write(name, args_json)}。确认吗？(y/N) ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() in ("y", "yes")
 
 
 def describe_history(history: list) -> str:
