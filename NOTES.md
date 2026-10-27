@@ -291,3 +291,17 @@ token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631�
 - **测试**：网页相关 17 个（假模型、假检索器、临时数据库）：后台任务、同一会话保留历史、页面确认 / 拒绝 / 超时、一次一条、API 出错回滚、错误请求、静态文件不越界、新对话、证据原文（本轮检索的和前几轮引用的）、记忆列表与删除（含忙时 409、GET 不能删）、资料面板（过期 / 没有索引）、Host 检查。全部单元测试 211 个。页面另用 Playwright 按电脑、平板、手机三种宽度截图检查（假模型）。
 - **学习用的简化 / 局限**：单用户本机；会话只在内存里，重启清空；轮询不是流式；重建索引后要重启服务；没有登录；前端没有自动化测试，只做了截图检查和真实浏览器手动验证。
 - 后续可做：在代码里限制每条请求的检索次数（4f 的 x02）；表格类片段的关键词检索；"分析 + 核验"两步对照实验，用 4f 题集衡量正确性、引用、延迟和成本。
+
+
+## 容器化 —— Docker 一键运行（2026-10-27）
+
+- **为什么做**：到现在为止项目只在我自己的电脑上跑得起来。换一台机器要装对 Python 版本、`pip install` 一遍、配 `.env`、再启动，别人常卡在依赖这一步（"在我这能跑，在你那不行"）。Docker 把"Python 版本 + 依赖 + 代码 + 启动命令"打成镜像，在任何装了 Docker 的机器上 `docker compose up --build` 一条命令就能打开网页版。也对应测试开发类岗位"熟悉 Docker 优先"的要求——但只在真的做了、跑通了之后才写进简历。
+- **做了什么**：`Dockerfile`（镜像怎么构建）、`.dockerignore`（什么不进镜像）、`docker-compose.yml`（怎么运行：端口、挂载、环境变量）、README 的"用 Docker 运行"一节。代码只改 `config.py` 两行：`WEB_HOST` 和 `MEMORY_DB_PATH` 允许用同名环境变量覆盖，默认值不变，本机 `python webapp.py` 的行为和以前一样。
+- **镜像里放什么、不放什么**：只放代码和依赖。`.env`（密钥）、`docs/` 里的论文、`index/`、`memory.sqlite3`、`logs/`、`.venv/`、`.git/` 都不进镜像（`.dockerignore`），和 `.gitignore` 的边界一致：镜像和仓库一样，是可以给别人的东西，里面不能有密钥和个人资料。用 `docker build` 到 `scratch` 再 `docker export` 列过一遍构建上下文：87 个文件，没有 `.env`、数据库、索引和论文。
+- **会变的数据怎么办——挂载**：容器删了里面的文件就没了，所以会变的东西都挂到宿主机：`docs/ index/ data/ logs/` 直接挂项目目录里的同名目录，记忆数据库放进新目录 `state/`（SQLite 单个文件没法在文件不存在时挂载——Docker 会建一个同名目录——所以挂整个目录，`MEMORY_DB_PATH=state/memory.sqlite3`）。嵌入模型约 2 GB，放在 Docker 卷 `hf-cache`（`HF_HOME=/hf-cache`）里，第一次启动下载一次，之后复用。代价：容器里的记忆库和本机直接运行的 `memory.sqlite3` 是两份。
+- **密钥**：`env_file: .env` 让 compose 在启动时把 `DEEPSEEK_API_KEY` 读进容器的环境变量；`llm_client.load_api_key` 本来就是"先 `.env` 后环境变量"，所以容器里没有 `.env` 文件也能拿到密钥，代码不用改。
+- **端口与安全边界**：容器内必须监听 `0.0.0.0`（只听 127.0.0.1 的话宿主机转发不进来），但 `ports: "127.0.0.1:8000:8000"` 让宿主机只在本机回环地址上开口，别的电脑访问不到——对外的边界和 `python webapp.py` 一样。浏览器发来的 Host 仍是 `127.0.0.1:8000`，阶段 5 的 Host 检查照常生效。
+- **torch 的取舍**：PyPI 上 Linux 版 torch 会连带装 NVIDIA CUDA 库（好几 GB），容器里没有 GPU。所以 Dockerfile 先从 PyTorch 官方 CPU 索引装 torch，再装 `requirements.txt`（torch 已满足不会重装）。索引地址是 `ARG`，万一某个平台没有对应的 wheel，`--build-arg TORCH_INDEX_URL=https://pypi.org/simple` 可以退回 PyPI。
+- **其他小决定**：`python:3.13-slim` 和本机 venv 同一个大版本；先 `COPY requirements.txt` 装依赖、再 `COPY . .`，改代码只重跑最后一层；`init: true` 让 Ctrl-C / `docker stop` 能正常结束 Python（Python 当 1 号进程时默认收不到 SIGTERM）；healthcheck 请求 `/api/status`，`docker compose ps` 显示 healthy；`docker compose run --rm app python build_index.py` 在容器里建索引、`... python -m unittest discover -s tests -t .` 在干净环境里跑 211 个测试。
+- **验证**：云端同版本 Python（3.13）打上 `config.py` 的改动后 211 个单元测试全部通过；设置 `WEB_HOST=0.0.0.0`、`MEMORY_DB_PATH=state/memory.sqlite3` 启动 `webapp.py`：`/`、`/api/status`、`/api/sources`、`/api/memories` 返回 200，Host 为别的域名返回 403，数据库建在 `state/memory.sqlite3`。Mac（Apple Silicon，Docker Desktop 4.97）上 `docker compose up --build` 跑通：构建约 5 分钟，镜像 2.29 GB（压缩后 509 MB）；首次启动含下载嵌入模型约 6 分钟到"检索就绪"；`docker compose ps` 显示 `Up (healthy)`、端口 `127.0.0.1:8000->8000/tcp`；`state/memory.sqlite3` 在宿主机生成；网页提问"论文里预训练跑了多少轮"得到带 E1/E2 引用的回答（2 次模型调用、2 次工具调用、3.0 秒），和本机版一致。遇到的问题：本机 `python webapp.py` 没关，8000 端口被占，compose 报 `address already in use`，关掉后重启即可。
+- **局限**：单容器、单用户，没有反向代理和 HTTPS，不是公网部署；镜像没有推到仓库；没有 K8s（一个本机演示服务用不着）。

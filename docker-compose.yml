@@ -1,0 +1,33 @@
+# docker-compose.yml — 一条命令构建并启动网页版：docker compose up --build
+# 然后用浏览器打开 http://127.0.0.1:8000（只在本机可访问；Ctrl-C 停止，docker compose down 清理容器）。
+#
+# 其他用法（都在项目目录里执行）：
+#   docker compose run --rm app python build_index.py                     # 在容器里建索引（写到宿主机的 index/）
+#   docker compose run --rm app python -m unittest discover -s tests -t .  # 在干净的容器里跑 211 个单元测试
+
+services:
+  app:
+    build: .
+    image: research-assistant:local
+    init: true                      # 用 tini 当 1 号进程，Ctrl-C / docker stop 能正常结束 Python
+    env_file: .env                  # DEEPSEEK_API_KEY 从 .env 读入容器的环境变量；.env 文件本身不进镜像
+    # WEB_HOST=0.0.0.0 和 MEMORY_DB_PATH=state/memory.sqlite3 已写在 Dockerfile 的 ENV 里，这里不重复。
+    ports:
+      - "127.0.0.1:8000:8000"       # 只绑定本机回环地址：别的电脑访问不到，和 python webapp.py 一致
+    volumes:
+      # 宿主机目录 : 容器内路径。镜像里不放会变的数据，改了资料 / 建了索引 / 存了记忆都落在项目目录里。
+      - ./data:/app/data            # CSV 工具允许读取的唯一目录
+      - ./docs:/app/docs            # 资料 PDF
+      - ./index:/app/index          # 向量索引（build_index.py 的输出）
+      - ./logs:/app/logs            # 运行日志 JSONL
+      - ./state:/app/state          # 记忆数据库 memory.sqlite3
+      - hf-cache:/hf-cache          # 嵌入模型缓存（约 2 GB，只下载一次；docker compose down -v 才会删）
+    healthcheck:                    # docker compose ps 显示 healthy = 服务已能响应
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  hf-cache:

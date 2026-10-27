@@ -2,7 +2,11 @@
 config.py — 项目里"最可能想改"的参数都集中在这里。
 其他文件只 import config，不各自硬编码模型名或超时。
 密钥不放在这里：密钥只从 .env / 环境变量读取（见 llm_client.load_api_key）。
+例外：WEB_HOST 和 MEMORY_DB_PATH 允许用同名环境变量覆盖——Docker 容器里要监听 0.0.0.0、把数据库放进挂载目录
+（见 Dockerfile）；本机直接运行时没有这两个环境变量，取的还是下面的默认值。
 """
+
+import os
 
 # ---- 模型供应商：DeepSeek（OpenAI 兼容接口）----
 BASE_URL = "https://api.deepseek.com"
@@ -33,7 +37,8 @@ MAX_TOTAL_SECONDS = 120    # 一条用户请求的总时间预算；超过就不
 MAX_HISTORY_TURNS = 10
 
 # ---- 长期记忆（阶段 2 下半）----
-MEMORY_DB_PATH = "memory.sqlite3"   # SQLite 文件，在项目目录下；已在 .gitignore 里（*.sqlite3）
+MEMORY_DB_PATH = os.environ.get("MEMORY_DB_PATH", "memory.sqlite3")   # SQLite 文件，在项目目录下；已在 .gitignore 里（*.sqlite3）。
+                                                                     # Docker 里设为 state/memory.sqlite3（整个目录挂载出来）
 MEMORY_SEARCH_LIMIT = 5             # search_memory 一次最多返回几条
 
 # ---- 受限 CSV 统计（阶段 3）----
@@ -64,7 +69,8 @@ TRACE_ENABLED = True       # 每条请求在日志目录里追加一行 JSON（�
 TRACE_DIR = "logs"         # 只在本机，已在 .gitignore 里
 
 # ---- 网页界面（阶段 5）----
-WEB_HOST = "127.0.0.1"     # 只在本机监听：别的电脑访问不到，API 密钥也只留在服务端
+WEB_HOST = os.environ.get("WEB_HOST", "127.0.0.1")   # 只在本机监听：别的电脑访问不到，API 密钥也只留在服务端。
+                                                     # Docker 里设为 0.0.0.0（容器内监听所有地址），对外仍只开 127.0.0.1（见 docker-compose.yml）
 WEB_PORT = 8000            # 不用 Flask 默认的 5000：macOS 的"隔空播放接收器"常占着它
 WEB_CONFIRM_TIMEOUT = 120  # 写操作等用户在网页上确认的最长秒数，超时按拒绝处理
 WEB_MAX_MESSAGE_CHARS = 2000   # 一条消息最长多少字

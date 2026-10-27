@@ -154,6 +154,30 @@ python -m unittest discover -s tests -t .
 
 其他入口：`python ask.py "一句话"`（一次普通模型请求）、`python agent.py "问题"`（单条请求的 Agent 循环，没有确认函数，所以不会写记忆）、`python eval_retrieval.py --questions eval/retrieval_questions_en.json`（检索评估）。
 
+## 用 Docker 运行（一条命令）
+
+不想在本机装 Python 和依赖时，可以用 Docker 运行网页版（先安装 Docker Desktop，内存上限给到 4 GB 以上）：
+
+```bash
+cd /Users/henry/AAI/research-assistant
+cp .env.example .env            # 填入 DEEPSEEK_API_KEY（已有 .env 就跳过）
+docker compose up --build       # 第一次构建要下载依赖约 1.5 GB；之后只重建改过的层
+```
+
+浏览器打开 `http://127.0.0.1:8000`。`Ctrl-C` 停止；`docker compose down` 删除容器，数据不会删。
+
+- **镜像里只有代码和依赖**（`Dockerfile`、`.dockerignore`）：`.env`、资料 PDF、索引、记忆数据库、日志都不进镜像。
+- **会变的数据挂在项目目录里**（`docker-compose.yml` 的 `volumes`）：`docs/`、`index/`、`data/`、`logs/` 和记忆数据库 `state/memory.sqlite3`，容器删了数据还在。嵌入模型缓存放在 Docker 卷 `hf-cache` 里：第一次启动下载约 2 GB，之后复用，`docker compose down -v` 才会删掉。
+- **对外只开 `127.0.0.1:8000`**：容器内监听 `0.0.0.0`（环境变量 `WEB_HOST`，`config.py` 读取），宿主机只把本机回环地址转发进去，别的电脑访问不到；Host 检查照常生效。
+- 容器里的记忆库是 `state/memory.sqlite3`，和本机直接运行用的 `memory.sqlite3` 是两份。
+
+在容器里建索引、跑测试：
+
+```bash
+docker compose run --rm app python build_index.py                      # 写到宿主机的 index/
+docker compose run --rm app python -m unittest discover -s tests -t .   # 211 个测试，在干净环境里跑
+```
+
 ## 文件说明
 
 | 文件 | 职责 |
@@ -185,6 +209,9 @@ python -m unittest discover -s tests -t .
 | `NOTES.md` | 每阶段的学习记录、实验和设计取舍 |
 | `RESUME_TARGET.md` | 简历条目的验收标准和逐阶段核对记录 |
 | `.env.example` | 密钥占位符；复制为 `.env` 后填真实密钥（`.env` 不进 git） |
+| `Dockerfile` / `.dockerignore` | 镜像：`python:3.13-slim` + CPU 版 torch + `requirements.txt`；密钥、资料、索引、数据库、日志不进镜像 |
+| `docker-compose.yml` | 一条命令构建并运行网页版：挂载 `docs/ index/ data/ logs/ state/` 和模型缓存卷，端口只绑定 `127.0.0.1` |
+| `state/` | 容器运行时的记忆数据库 `memory.sqlite3`（不进 git） |
 
 ## 会发送给模型 API 的内容
 

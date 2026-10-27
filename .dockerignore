@@ -1,0 +1,25 @@
+# 不进镜像的东西（和 .gitignore 大体一致）：密钥、本机环境、运行时产生的数据
+.env
+.venv*/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.DS_Store
+AGENTS.md
+
+# 运行时数据：由 docker-compose.yml 从宿主机挂载，不打进镜像
+*.sqlite3
+*.db
+logs/
+index/
+state/
+docs/*
+!docs/sample_protocol.pdf
+eval/local/
+screenshots/
+
+# Docker 自己的文件
+Dockerfile
+docker-compose.yml
+.dockerignore

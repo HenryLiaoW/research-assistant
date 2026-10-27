@@ -12,6 +12,8 @@ __pycache__/
 *.sqlite3
 *.db
 logs/
+# Docker 容器的记忆数据库目录（docker-compose.yml 挂载）
+state/
 
 # macOS
 .DS_Store
