@@ -22,8 +22,9 @@ CHUNKS = [
     {"chunk_id": "a.pdf#p1#0", "file": "a.pdf", "page": 1, "label": "1", "section": "1 Intro", "text": "alpha"},
     {"chunk_id": "a.pdf#p2#0", "file": "a.pdf", "page": 2, "label": "2", "section": "2 Methods", "text": "beta"},
     {"chunk_id": "a.pdf#p3#0", "file": "a.pdf", "page": 3, "label": "3", "section": "3 Results", "text": "gamma"},
+    {"chunk_id": "b.pdf#p1#0", "file": "b.pdf", "page": 1, "label": "1", "section": "1 Setup", "text": "delta"},
 ]
-VECTORS = np.array([[1.0, 0.0], [0.0, 1.0], [0.6, 0.8]], dtype=np.float32)   # 都已归一化
+VECTORS = np.array([[1.0, 0.0], [0.0, 1.0], [0.6, 0.8], [-0.6, 0.8]], dtype=np.float32)   # 都已归一化
 
 
 class DocumentSearchTest(unittest.TestCase):
@@ -47,7 +48,25 @@ class DocumentSearchTest(unittest.TestCase):
         self.assertAlmostEqual(top["score"], 1.0, places=4)
 
     def test_k_larger_than_index_returns_all(self):
-        self.assertEqual(len(self.searcher.search("q", k=10)), 3)
+        self.assertEqual(len(self.searcher.search("q", k=10)), 4)
+
+    def test_files_lists_indexed_files(self):
+        self.assertEqual(self.searcher.files, ["a.pdf", "b.pdf"])
+
+    def test_file_filter_is_applied_before_top_k(self):
+        # delta 和 [1, 0] 的相似度是 -0.6，全库排最后；先取前 1 再过滤会一条都不剩，先过滤再取才拿得到它
+        results = self.searcher.search("q", k=1, file="b.pdf")
+        self.assertEqual([r["chunk_id"] for r in results], ["b.pdf#p1#0"])
+        self.assertAlmostEqual(results[0]["score"], -0.6, places=4)
+
+    def test_file_filter_returns_only_that_file_and_at_most_its_chunks(self):
+        results = self.searcher.search("q", k=10, file="a.pdf")
+        self.assertEqual([r["file"] for r in results], ["a.pdf"] * 3)
+        self.assertEqual([r["chunk_id"] for r in results], ["a.pdf#p1#0", "a.pdf#p3#0", "a.pdf#p2#0"])
+
+    def test_unknown_file_is_refused_with_available_names(self):
+        with self.assertRaisesRegex(ValueError, "a.pdf"):
+            self.searcher.search("q", k=1, file="c.pdf")
 
     def test_search_does_not_change_stored_chunks(self):
         self.searcher.search("q", k=3)

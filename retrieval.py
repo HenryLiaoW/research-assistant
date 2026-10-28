@@ -101,6 +101,15 @@ def ensure_fresh(index_dir, files: list) -> None:
         raise ValueError("索引已过期：" + "；".join(reasons) + "。请重新运行 python build_index.py")
 
 
+def indexed_files(index_dir) -> list:
+    """建索引时收录的文件名（manifest 里的 files）；索引不存在时返回空列表。
+    只读 manifest.json，不加载向量和模型。谁调用：tools.py（把文件名写进 search_documents 的工具说明）。"""
+    path = Path(index_dir) / "manifest.json"
+    if not path.exists():
+        return []
+    return list(json.loads(path.read_text(encoding="utf-8")).get("files") or [])
+
+
 def index_status(index_dir, files: list) -> dict:
     """索引的概况，给网页的"资料"面板：在不在、怎么建的、每个文件切成了几段、和资料目录是否一致。
     只读 manifest.json 和 chunks.jsonl，不加载向量和模型。谁调用：webapp.py。"""
@@ -132,14 +141,27 @@ class DocumentSearch:
         self.vectors = vectors        # …… 对应第 i 行向量，形状 (chunk 数, 向量长度)
         self.manifest = manifest
         self.embedder = embedder
+        self.files = sorted({c["file"] for c in chunks})   # 索引里有哪些文件，给 file 参数做校验
 
-    def search(self, query: str, k: int = 3) -> list:
-        """返回最相近的 k 个 chunk，从高到低；每个是 chunk 字典的副本，多一个 "score"（余弦相似度）。"""
+    def search(self, query: str, k: int = 3, file: str = None) -> list:
+        """返回最相近的 k 个 chunk，从高到低；每个是 chunk 字典的副本，多一个 "score"（余弦相似度）。
+
+        file：只在这一个文件里找。过滤在取前 k 个之前做（先把其他文件的分数置为 -inf，再排序），
+        而不是先取全库前 k 个再过滤：资料库里多份文件主题相近时，小文件的段落常常排不进全库前 k 个，
+        "先取后滤"会一条都剩不下。file 不是索引里的文件时报 ValueError（工具层应先校验）。
+        """
+        if file is not None and file not in self.files:
+            raise ValueError(f"索引里没有文件 {file!r}，现有文件：{'、'.join(self.files)}")
         q = self.embedder.embed_query(query)
         scores = self.vectors @ q
+        if file is not None:
+            mask = np.array([c["file"] == file for c in self.chunks])
+            scores = np.where(mask, scores, -np.inf)       # 其他文件的段落不参与排序
         results = []
         top = np.argsort(-scores)[:k]
         for i in top:
+            if not np.isfinite(scores[i]):                 # 该文件的段落不足 k 个：有几个返回几个
+                break
             results.append({**self.chunks[i], "score": round(float(scores[i]), 4)})
 
         return results

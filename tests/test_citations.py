@@ -64,7 +64,9 @@ class RenderTest(unittest.TestCase):
 
 
 class FakeSearcher:
-    def search(self, query, k):
+    files = ["dissertation.pdf"]                     # 真检索器有这个属性：file 参数要对着它校验
+
+    def search(self, query, k, file=None):
         return [chunk("p22", 22), chunk("p23", 23, section="3.4 Experimental protocol", label="15")][:k]
 
 

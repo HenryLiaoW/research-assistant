@@ -20,6 +20,19 @@ import memory
 import retrieval
 
 # ---- 菜单：发给模型的工具定义（OpenAI 兼容格式）----
+
+def _search_description() -> str:
+    """search_documents 的说明：把索引里的文件名写进去，模型才知道 file 参数能填什么。
+    文件名读自 manifest.json（进程启动时读一次，不加载模型）；没有索引时就不列。"""
+    text = ("在资料库（论文、实验协议等 PDF）里检索和问题相关的段落，返回原文片段和出处（文件、PDF 页码、章节）。"
+            "用户问到资料里的内容时调用。资料是英文的，所以 query 要用英文；"
+            "如果用户用其他语言提问，先把问题翻译成英文再检索。")
+    files = retrieval.indexed_files(config.INDEX_DIR)
+    if files:
+        text += f"资料库现有文件：{'、'.join(files)}。用户指明了某一份时，用 file 参数只在它里面检索。"
+    return text
+
+
 TOOLS = [
     {
         "type": "function",
@@ -142,16 +155,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_documents",
-            "description": (
-                "在资料库（论文、实验协议等 PDF）里检索和问题相关的段落，返回原文片段和出处（文件、PDF 页码、章节）。"
-                "用户问到资料里的内容时调用。资料是英文的，所以 query 要用英文；"
-                "如果用户用其他语言提问，先把问题翻译成英文再检索。"
-            ),
+            "description": _search_description(),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "英文检索词，例如 'number of pretraining epochs'"},
                     "k": {"type": "integer", "description": f"返回几个片段，1–{config.MAX_SEARCH_K}，默认 {config.SEARCH_TOP_K}"},
+                    "file": {"type": "string", "description": "只在这一份文件里检索，必须是资料库现有文件名；用户没有指明文件时省略"},
                 },
                 "required": ["query"],
             },
@@ -278,8 +288,9 @@ def index_info():
     return {"model": _searcher.manifest.get("model"), "built_at": _searcher.manifest.get("built_at")}
 
 
-def search_documents(query, k=None) -> dict:
-    """检索资料。谁调用：run_tool()。输入：检索词、可选的条数。输出：ok + 每个片段的原文和出处。"""
+def search_documents(query, k=None, file=None) -> dict:
+    """检索资料。谁调用：run_tool()。输入：检索词、可选的条数、可选的文件名（只在这一份里找）。
+    输出：ok + 每个片段的原文和出处。file 写错时返回现有文件名，模型下一轮能改对。"""
     if not isinstance(query, str) or not query.strip():
         return {"ok": False, "error": "query 必须是非空字符串"}
     if len(query) > config.MAX_QUERY_CHARS:
@@ -288,14 +299,21 @@ def search_documents(query, k=None) -> dict:
         k = config.SEARCH_TOP_K
     if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= config.MAX_SEARCH_K:
         return {"ok": False, "error": f"k 必须是 1 到 {config.MAX_SEARCH_K} 之间的整数，收到 {k!r}"}
+    if file is not None and (not isinstance(file, str) or not file.strip()):
+        return {"ok": False, "error": "file 必须是文件名字符串，不指定文件时省略"}
     try:
         searcher = _get_searcher()
     except (FileNotFoundError, ValueError) as e:     # 没建索引 / 资料变了 / 索引和当前模型不一致
         return {"ok": False, "error": str(e)}
-    results = searcher.search(query.strip(), k) # 核心代码
+    if file is not None:
+        file = file.strip()
+        if file not in searcher.files:
+            return {"ok": False, "error": f"资料库里没有文件 {file}，现有文件：{'、'.join(searcher.files)}"}
+    results = searcher.search(query.strip(), k, file=file) # 核心代码
     return {
         "ok": True,
         "query": query.strip(),
+        "file": file,
         "results": [{"chunk_id": r["chunk_id"], "file": r["file"], "page": r["page"], "label": r["label"],
                      "section": r["section"], "score": r["score"], "text": r["text"]} for r in results],
     }

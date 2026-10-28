@@ -26,8 +26,9 @@ CHUNKS = [{"chunk_id": "d.pdf#p22#3", "file": "d.pdf", "page": 22, "label": "14"
 
 class FakeSearcher:
     manifest = {"model": "fake", "built_at": "2026-10-26T00:00:00+00:00"}    # 运行日志会读索引版本
+    files = sorted({c["file"] for c in CHUNKS})
 
-    def search(self, query, k):
+    def search(self, query, k, file=None):
         return [dict(c) for c in CHUNKS[:k]]
 
 

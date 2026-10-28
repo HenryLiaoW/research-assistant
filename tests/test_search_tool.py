@@ -10,13 +10,14 @@ from tools import run_tool
 
 
 class FakeSearcher:
-    """假检索器：记下收到的 query 和 k，返回固定的片段。"""
+    """假检索器：记下收到的 query、k 和 file，返回固定的片段。"""
+    files = ["d.pdf", "p.pdf"]
 
     def __init__(self):
         self.calls = []
 
-    def search(self, query, k):
-        self.calls.append((query, k))
+    def search(self, query, k, file=None):
+        self.calls.append((query, k, file))
         chunk = {"chunk_id": "d.pdf#p22#3", "file": "d.pdf", "page": 22, "label": "14",
                  "section": "3.3.3 Pretraining", "text": "Pretraining runs for 50 epochs.", "score": 0.83}
         return [chunk] * k
@@ -34,7 +35,8 @@ class SearchToolTest(unittest.TestCase):
     def test_returns_text_with_sources(self):
         r = run_tool("search_documents", '{"query": "pretraining epochs"}')
         self.assertTrue(r["ok"])
-        self.assertEqual(self.fake.calls, [("pretraining epochs", 3)])      # 默认 k = 3
+        self.assertEqual(self.fake.calls, [("pretraining epochs", 3, None)])   # 默认 k = 3、不限文件
+        self.assertIsNone(r["file"])
         first = r["results"][0]
         self.assertEqual((first["file"], first["page"], first["section"]), ("d.pdf", 22, "3.3.3 Pretraining"))
         self.assertIn("50 epochs", first["text"])
@@ -45,6 +47,20 @@ class SearchToolTest(unittest.TestCase):
         for bad in ('0', '6', '"3"', 'true', '2.5'):
             r = run_tool("search_documents", '{"query": "x", "k": %s}' % bad)
             self.assertFalse(r["ok"], bad)
+
+    def test_file_filter_passed_through(self):
+        r = run_tool("search_documents", '{"query": "data split", "file": " p.pdf "}')
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["file"], "p.pdf")
+        self.assertEqual(self.fake.calls, [("data split", 3, "p.pdf")])
+
+    def test_unknown_or_bad_file_rejected_with_available_names(self):
+        r = run_tool("search_documents", '{"query": "x", "file": "nope.pdf"}')
+        self.assertFalse(r["ok"])
+        self.assertIn("d.pdf", r["error"])                                  # 报错里列出现有文件，模型下一轮能改对
+        for bad in ('""', '"  "', '3', 'true'):
+            self.assertFalse(run_tool("search_documents", '{"query": "x", "file": %s}' % bad)["ok"], bad)
+        self.assertEqual(self.fake.calls, [])
 
     def test_bad_query_rejected(self):
         for bad in ('""', '"   "', '123', 'null', json.dumps("x" * 501)):
