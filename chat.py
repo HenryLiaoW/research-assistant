@@ -7,7 +7,8 @@ chat.py — 阶段 2（上半）：多轮对话。同一次运行里，模型能
 命令：
     /new       清空会话历史，重新开始（只保留系统提示）
     /history   显示当前历史里有多少条消息、多少个回合
-    /memories  列出长期记忆库里的全部有效记忆（直接读数据库，不经过模型）
+    /memories  列出当前课题（作用域）里的有效记忆（直接读数据库，不经过模型）
+    /scope     显示当前课题和各课题的记忆数；/scope <名字> 切换课题（之后的记忆写入和检索都只在这个课题里）
     /quit      退出（Ctrl-D 或 Ctrl-C 也可以）
 
 两种记忆：会话历史只在内存里、按回合裁剪、程序退出即失；长期记忆在 SQLite 文件里，
@@ -52,7 +53,8 @@ def main() -> None:
     history = new_history()
     session_id = tracing.new_session_id()                # 同一段对话的请求在日志里共用这个编号
     memory_conn = memory.connect(config.MEMORY_DB_PATH)  # 只给 /memories 用；模型走 tools.py 里的连接
-    print("多轮对话已开始。输入 /new 重开，/history 查看历史，/memories 看长期记忆，/quit 退出。")
+    print("多轮对话已开始。输入 /new 重开，/history 查看历史，/memories 看长期记忆，/scope 看或切换课题，/quit 退出。")
+    print(f"当前课题（记忆作用域）：{tools.memory_scope()}")
     if config.TRACE_ENABLED:
         print(f"运行日志写在 {config.TRACE_DIR}/（只在本机，不进 git）。")
 
@@ -77,11 +79,25 @@ def main() -> None:
             print(f"[history] {describe_history(history)}")
             continue
         if text == "/memories":
-            rows = memory.list_all(memory_conn)
+            scope = tools.memory_scope()
+            rows = memory.list_all(memory_conn, scope)
+            others = sum(s["count"] for s in memory.scopes(memory_conn) if s["scope"] != scope)
             if not rows:
-                print("[memory] 长期记忆为空。")
+                print(f"[memory] 课题「{scope}」的长期记忆为空。")
             for r in rows:
                 print(f"[memory] #{r['id']}  {r['created_at']}  {r['content']}")
+            if others:
+                print(f"[memory] 其他课题另有 {others} 条，/scope 可查看并切换。")
+            continue
+        if text == "/scope" or text.startswith("/scope "):
+            name = text[len("/scope"):].strip()
+            if name:
+                r = tools.set_memory_scope(name)
+                print(f"[memory] 已切换到课题「{r['scope']}」。" if r["ok"] else f"[memory] {r['error']}")
+            else:
+                print(f"[memory] 当前课题：{tools.memory_scope()}")
+                for s in memory.scopes(memory_conn):
+                    print(f"[memory]   {s['scope']}：{s['count']} 条")
             continue
 
         history.append({"role": "user", "content": text})

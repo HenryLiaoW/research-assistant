@@ -35,6 +35,7 @@ def start(session_id: str, question: str) -> dict:
         "session_id": session_id,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": config.MODEL,
+        "memory_scope": tools.memory_scope(),   # 这条请求在哪个课题下：记忆题答错时先看作用域对不对
         "question": question,
         "model_calls": [],   # run_agent 每调用一次模型追加一条
         "tool_calls": [],    # run_agent 每执行一个工具追加一条（经 tool_entry 整理）

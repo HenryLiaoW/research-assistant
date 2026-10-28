@@ -40,6 +40,8 @@ MAX_HISTORY_TURNS = 10
 MEMORY_DB_PATH = os.environ.get("MEMORY_DB_PATH", "memory.sqlite3")   # SQLite 文件，在项目目录下；已在 .gitignore 里（*.sqlite3）。
                                                                      # Docker 里设为 state/memory.sqlite3（整个目录挂载出来）
 MEMORY_SEARCH_LIMIT = 5             # search_memory 一次最多返回几条
+MEMORY_SCOPE = os.environ.get("MEMORY_SCOPE", "default")   # 启动时的记忆作用域（课题名）；chat.py 里用 /scope 切换。
+                                                           # 写入和检索都只在当前作用域里，别的课题的记忆不会被召回
 
 # ---- 受限 CSV 统计（阶段 3）----
 DATA_DIR = "data"          # 工具只能读这个目录里的 .csv（相对项目目录，请在项目目录里运行）

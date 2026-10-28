@@ -204,15 +204,32 @@ def calculate_stats(numbers) -> dict:
 # 数据库连接在模块加载时打开一次，整个进程共用。路径来自 config，文件不进 git。
 _memory_conn = memory.connect(config.MEMORY_DB_PATH)
 
+# 当前记忆作用域（课题）。由用户/程序设定，模型的工具参数里没有它：模型只给内容，作用域由这里盖上。
+_memory_scope = config.MEMORY_SCOPE
+
+
+def memory_scope() -> str:
+    """当前作用域。谁调用：chat.py 显示、tracing.start 记日志、webapp.py。"""
+    return _memory_scope
+
+
+def set_memory_scope(name) -> dict:
+    """切换作用域。谁调用：chat.py 的 /scope、webapp.py。名字不合法时不切换，返回 ok=False。"""
+    global _memory_scope
+    if not memory.valid_scope(name):
+        return {"ok": False, "error": f"作用域名无效：{name!r}（非空、不超过 {memory.MAX_SCOPE_CHARS} 字符、不含换行）"}
+    _memory_scope = name.strip()
+    return {"ok": True, "scope": _memory_scope}
+
 
 def save_memory(content) -> dict:
-    """写入一条记忆。谁调用：run_tool()。输入：用户原话。输出：ok + 新 id。"""
-    return memory.save(_memory_conn, content)
+    """写入一条记忆到当前作用域。谁调用：run_tool()。输入：用户原话。输出：ok + 新 id + scope。"""
+    return memory.save(_memory_conn, content, scope=_memory_scope)
 
 
 def search_memory(keyword) -> dict:
-    """关键词查找。谁调用：run_tool()。输出：ok + results 列表（每条含 id / content / created_at）。"""
-    return memory.search(_memory_conn, keyword, limit=config.MEMORY_SEARCH_LIMIT)
+    """在当前作用域里按关键词查找。谁调用：run_tool()。输出：ok + results 列表（每条含 id / content / created_at / scope）。"""
+    return memory.search(_memory_conn, keyword, limit=config.MEMORY_SEARCH_LIMIT, scope=_memory_scope)
 
 
 def describe_write(name: str, args_json: str) -> str:
@@ -225,7 +242,7 @@ def describe_write(name: str, args_json: str) -> str:
     if not isinstance(args, dict):
         args = {}
     if name == "save_memory":
-        return f"保存一条长期记忆：「{args.get('content')}」"
+        return f"保存一条长期记忆到课题「{_memory_scope}」：「{args.get('content')}」"
     if name == "forget_memory":
         try:
             memory_id = int(args.get("memory_id"))
@@ -241,9 +258,15 @@ def forget_memory(memory_id) -> dict:
     return memory.forget(_memory_conn, memory_id)
 
 
-def list_memories() -> list:
-    """全部有效记忆。不是模型工具（不在 TOOL_IMPLEMENTATIONS 里），谁调用：describe_write()、webapp.py（记忆面板）。"""
-    return memory.list_all(_memory_conn)
+def list_memories(scope=None) -> list:
+    """有效记忆：scope 为 None 列全部作用域（每条带 scope），否则只列那个作用域。
+    不是模型工具（不在 TOOL_IMPLEMENTATIONS 里），谁调用：describe_write()、webapp.py（记忆面板）。"""
+    return memory.list_all(_memory_conn, scope)
+
+
+def memory_scopes() -> list:
+    """每个作用域的有效记忆数。谁调用：chat.py 的 /scope。"""
+    return memory.scopes(_memory_conn)
 
 
 

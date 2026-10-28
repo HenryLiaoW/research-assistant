@@ -89,6 +89,54 @@ class RunToolTests(unittest.TestCase):
 
 
 
+class MemoryScopeTests(unittest.TestCase):
+    """作用域由程序设定、由工具盖上：模型的参数里没有它。"""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        import memory
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        conn = memory.connect(str(Path(tmp.name) / "m.sqlite3"))
+        self.addCleanup(conn.close)
+        self.saved_conn, self.saved_scope = tools._memory_conn, tools._memory_scope
+        tools._memory_conn = conn
+        tools._memory_scope = "default"
+
+    def tearDown(self):
+        tools._memory_conn, tools._memory_scope = self.saved_conn, self.saved_scope
+
+    def test_tools_stamp_current_scope(self):
+        self.assertTrue(tools.set_memory_scope("icu")["ok"])
+        r = run_tool("save_memory", '{"content": "下次实验用 seed 42"}')
+        self.assertEqual((r["ok"], r["scope"]), (True, "icu"))
+        tools.set_memory_scope("kline")
+        self.assertEqual(run_tool("search_memory", '{"keyword": "seed"}')["results"], [])   # 换了课题就查不到
+        tools.set_memory_scope("icu")
+        self.assertEqual([m["content"] for m in run_tool("search_memory", '{"keyword": "seed"}')["results"]],
+                         ["下次实验用 seed 42"])
+        self.assertIn("课题「icu」", tools.describe_write("save_memory", '{"content": "x"}'))   # 确认时看得到课题
+
+    def test_model_cannot_pass_scope(self):
+        r = run_tool("save_memory", '{"content": "x", "scope": "kline"}')
+        self.assertFalse(r["ok"])                                                           # 多余参数：参数不匹配
+        self.assertEqual(tools.list_memories(), [])
+
+    def test_bad_scope_name_keeps_current(self):
+        tools.set_memory_scope("icu")
+        for bad in ("", "  ", "a\nb", "x" * 65, None):
+            self.assertFalse(tools.set_memory_scope(bad)["ok"], repr(bad))
+        self.assertEqual(tools.memory_scope(), "icu")
+
+    def test_listing_by_scope(self):
+        tools.set_memory_scope("icu"); run_tool("save_memory", '{"content": "a"}')
+        tools.set_memory_scope("kline"); run_tool("save_memory", '{"content": "b"}')
+        self.assertEqual([m["scope"] for m in tools.list_memories()], ["icu", "kline"])
+        self.assertEqual([m["content"] for m in tools.list_memories("kline")], ["b"])
+        self.assertEqual(tools.memory_scopes(), [{"scope": "icu", "count": 1}, {"scope": "kline", "count": 1}])
+
+
 class CsvToolDispatchTests(unittest.TestCase):
     """阶段 3：CSV 工具经过 run_tool 调度，和模型真实调用时走同一条路。读项目里的 data/sample_results.csv。"""
 

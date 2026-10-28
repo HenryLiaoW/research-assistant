@@ -71,6 +71,43 @@ class MemoryStoreTest(unittest.TestCase):
         self.assertEqual(memory.search(self.conn, "DROP")["results"][0]["content"], evil)
         self.assertEqual(len(memory.list_all(self.conn)), 1)
 
+    def test_scopes_are_isolated(self):
+        a = memory.save(self.conn, "下次实验用 seed 42", scope="icu")
+        memory.save(self.conn, "下次实验用 seed 7", scope="kline")
+        found = memory.search(self.conn, "seed", scope="icu")["results"]
+        self.assertEqual([m["id"] for m in found], [a["id"]])                 # 另一个课题的记忆不会被召回
+        self.assertEqual(found[0]["scope"], "icu")
+        self.assertEqual(memory.search(self.conn, "seed", scope="other")["results"], [])
+        self.assertEqual(memory.search(self.conn, "", scope="kline")["results"][0]["content"], "下次实验用 seed 7")
+
+    def test_default_scope_and_listing(self):
+        memory.save(self.conn, "默认课题的事")
+        memory.save(self.conn, "icu 的事", scope="icu")
+        self.assertEqual([m["content"] for m in memory.list_all(self.conn, "default")], ["默认课题的事"])
+        self.assertEqual([m["scope"] for m in memory.list_all(self.conn)], ["default", "icu"])   # None = 全部
+        self.assertEqual(memory.scopes(self.conn), [{"scope": "default", "count": 1}, {"scope": "icu", "count": 1}])
+
+    def test_bad_scope_rejected(self):
+        for bad in ("", "   ", "a\nb", "x" * 65, None, 3):
+            self.assertFalse(memory.save(self.conn, "x", scope=bad)["ok"], repr(bad))
+            self.assertFalse(memory.search(self.conn, "x", scope=bad)["ok"], repr(bad))
+        self.assertTrue(memory.save(self.conn, "x", scope="  icu  ")["ok"])
+        self.assertEqual(memory.list_all(self.conn)[0]["scope"], "icu")                    # 首尾空白去掉
+
+    def test_old_database_without_scope_column_is_migrated(self):
+        import sqlite3
+        self.conn.close()
+        os.remove(self.db_path)
+        old = sqlite3.connect(self.db_path)                                               # 阶段 2 的建表语句
+        old.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, "
+                    "created_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0)")
+        old.execute("INSERT INTO memories (content, created_at) VALUES ('旧记忆', '2026-10-19T00:00:00+00:00')")
+        old.commit(); old.close()
+        self.conn = memory.connect(self.db_path)
+        rows = memory.list_all(self.conn)
+        self.assertEqual([(m["content"], m["scope"]) for m in rows], [("旧记忆", "default")])   # 旧记忆归入 default
+        self.assertEqual(memory.search(self.conn, "旧", scope="default")["results"][0]["content"], "旧记忆")
+
     def test_persists_across_connections(self):
         memory.save(self.conn, "跨连接还在")
         self.conn.close()
