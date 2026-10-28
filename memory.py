@@ -15,6 +15,10 @@ memory.py — 阶段 2 下半：长期记忆的存储层（SQLite）。
 当前作用域由用户/程序设定（tools.set_memory_scope），不是模型的参数：模型只给内容，作用域由程序盖上，
 资料里夹带的指令也改不了它。
 
+两级：普通课题之上有一个特殊作用域 GLOBAL_SCOPE（"global"），放对所有课题都适用的事（论文截止日期）。
+读的时候两级合并——当前课题 + 全局，当前课题排在前面、全局垫后（条数有上限，最相关的一级要先进来）；
+写的时候只写当前课题，想写全局就先切到 global。其他课题仍然一条不出现。
+
 安全约定：
 - 所有 SQL 用 ? 占位符传参，外部文字（含模型给的）永远是"值"，不拼进语句；
 - 本模块不提供"执行任意 SQL"的入口，模型也没有这样的工具。
@@ -24,6 +28,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 DEFAULT_SCOPE = "default"
+GLOBAL_SCOPE = "global"     # 所有课题都能读到的一级；切到它再"记住"就是写全局
 MAX_SCOPE_CHARS = 64
 
 
@@ -79,29 +84,33 @@ def save(conn: sqlite3.Connection, content: str, scope: str = DEFAULT_SCOPE) -> 
 
 
 def search(conn: sqlite3.Connection, keyword: str, limit: int = 5, scope: str = DEFAULT_SCOPE) -> dict:
-    """在一个作用域里按关键词子串匹配有效记忆，最新的在前。输入：关键词、条数上限、作用域。
-    输出：{"ok": True, "results": [...]}。空关键词返回该作用域最近 limit 条（相当于"最近记了什么"）。
-    其他作用域的记忆不会出现：过滤在 SQL 里做，不是取出来再筛。
+    """按关键词子串匹配有效记忆：当前作用域 + 全局两级合并，当前作用域优先，同一级里最新的在前。
+    输入：关键词、条数上限、作用域。输出：{"ok": True, "scope", "results": [...], "other_scopes_matching"}。
+    空关键词返回最近 limit 条（相当于"最近记了什么"）。
+    其他课题的记忆不会出现：过滤在 SQL 的 WHERE 里做，不是取出来再筛。
+    结果为空时 other_scopes_matching 给出其他课题里匹配的条数（只给条数不给内容）：用户可能站错了课题。
     """
     if not isinstance(keyword, str):
         return {"ok": False, "error": "关键词必须是字符串"}
     if not valid_scope(scope):
         return {"ok": False, "error": f"作用域无效：{scope!r}"}
     keyword = keyword.strip()
-    if keyword:
-        rows = conn.execute(
-            "SELECT id, content, created_at, scope FROM memories "
-            "WHERE deleted = 0 AND scope = ? AND content LIKE ? "
-            "ORDER BY id DESC LIMIT ?",
-            (scope.strip(), f"%{keyword}%", limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, content, created_at, scope FROM memories "
-            "WHERE deleted = 0 AND scope = ? ORDER BY id DESC LIMIT ?",
-            (scope.strip(), limit),
-        ).fetchall()
-    return {"ok": True, "keyword": keyword, "scope": scope.strip(), "results": [_row_to_dict(r) for r in rows]}
+    scope = scope.strip()
+    like = f"%{keyword}%" if keyword else "%"           # 空关键词：LIKE '%' 匹配全部
+    rows = conn.execute(
+        "SELECT id, content, created_at, scope FROM memories "
+        "WHERE deleted = 0 AND scope IN (?, ?) AND content LIKE ? "
+        "ORDER BY CASE WHEN scope = ? THEN 0 ELSE 1 END, id DESC LIMIT ?",   # 当前课题排前面，全局垫后
+        (scope, GLOBAL_SCOPE, like, scope, limit),
+    ).fetchall()
+    result = {"ok": True, "keyword": keyword, "scope": scope, "results": [_row_to_dict(r) for r in rows]}
+    if not rows:
+        other = conn.execute(
+            "SELECT COUNT(*) AS n FROM memories WHERE deleted = 0 AND scope NOT IN (?, ?) AND content LIKE ?",
+            (scope, GLOBAL_SCOPE, like),
+        ).fetchone()["n"]
+        result["other_scopes_matching"] = other
+    return result
 
 
 def forget(conn: sqlite3.Connection, memory_id: int) -> dict:

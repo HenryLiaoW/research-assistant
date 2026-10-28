@@ -80,6 +80,32 @@ class MemoryStoreTest(unittest.TestCase):
         self.assertEqual(memory.search(self.conn, "seed", scope="other")["results"], [])
         self.assertEqual(memory.search(self.conn, "", scope="kline")["results"][0]["content"], "下次实验用 seed 7")
 
+    def test_global_is_merged_after_current_scope(self):
+        memory.save(self.conn, "seed 固定后要跑 10 次", scope="global")
+        memory.save(self.conn, "下次实验用 seed 42", scope="icu")
+        memory.save(self.conn, "下次实验用 seed 7", scope="kline")
+        found = memory.search(self.conn, "seed", scope="icu")["results"]
+        self.assertEqual([(m["content"], m["scope"]) for m in found],
+                         [("下次实验用 seed 42", "icu"), ("seed 固定后要跑 10 次", "global")])   # 当前课题在前，全局垫后，kline 不出现
+        self.assertEqual([m["scope"] for m in memory.search(self.conn, "", scope="kline")["results"]], ["kline", "global"])
+        self.assertEqual([m["scope"] for m in memory.search(self.conn, "seed", scope="global")["results"]], ["global"])
+
+    def test_current_scope_wins_the_limit(self):
+        for i in range(5):
+            memory.save(self.conn, f"全局 {i}", scope="global")
+        memory.save(self.conn, "课题里的", scope="icu")
+        found = memory.search(self.conn, "", limit=3, scope="icu")["results"]
+        self.assertEqual(found[0]["content"], "课题里的")                        # 条数有上限时当前课题不会被全局挤掉
+        self.assertEqual(len(found), 3)
+
+    def test_empty_result_counts_other_scopes(self):
+        memory.save(self.conn, "下次实验用 seed 42", scope="icu")
+        memory.save(self.conn, "seed 固定后要跑 10 次", scope="global")
+        r = memory.search(self.conn, "seed 42", scope="kline")
+        self.assertEqual(r["results"], [])
+        self.assertEqual(r["other_scopes_matching"], 1)                          # 只给条数，不给内容
+        self.assertNotIn("other_scopes_matching", memory.search(self.conn, "seed", scope="kline"))   # 有结果时不附带
+
     def test_default_scope_and_listing(self):
         memory.save(self.conn, "默认课题的事")
         memory.save(self.conn, "icu 的事", scope="icu")

@@ -28,7 +28,7 @@ eval_agent.py — 端到端评估（阶段 4f）：用固定题目跑完整的 A
 人工判分（只判第一次运行里 review=true 的题）：回答对不对、引用的原文是否支持回答。
 
 不会读写你的长期记忆：每次运行把工具用的记忆库换成一个临时库，跑完即删。
-写操作的确认按题目里的 confirm 字段代答（没写就拒绝）。
+写操作的确认按题目里的 confirm 字段代答（没写就拒绝）。题目的 scope 字段设定这道题运行时的记忆作用域（默认 default）。
 会发给模型 API 的内容和 chat.py 相同：题目、检索到的论文片段、CSV 统计汇总、临时记忆库里的内容。
 结果存在 eval/local/（不进 git）：里面有检索到的论文原文，供人工判分对照。
 """
@@ -63,7 +63,7 @@ CATEGORY_NAMES = {"doc": "论文问答", "doc_implicit": "论文问答·没说�
 # 回答里出现其中任意一个，就算"明确说了没有"。只是初筛，资料外的题还要人工复核。
 ABSTAIN_MARKERS = ["没有提到", "没有提及", "未提及", "没有找到", "没找到", "未找到", "找不到", "没有查到", "未查到",
                    "查不到", "没有记录", "没有相关", "没有关于", "没有涉及", "没有说明", "未说明", "没有给出", "未给出",
-                   "不包含", "没有包含", "没有之前", "看不到", "无法确定", "无法回答", "不知道", "没有这方面"]
+                   "不包含", "没有包含", "没有之前", "看不到", "没有保留", "无法确定", "无法回答", "不知道", "没有这方面"]
 # 数字：1,389 这种带千分位的整体算一个；和字母连着的（证据编号 E7、PC1）不算
 NUMBER = re.compile(r"(?<![A-Za-z\d.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![A-Za-z\d.])\d+(?:\.\d+)?")
 
@@ -157,10 +157,31 @@ def score_case(case: dict, rec: dict) -> dict:
 
 # ---------- 运行 ----------
 
+def select_with_requirements(cases: list, only) -> list:
+    """按 --only 选题，并自动带上题目 requires 里声明的前置题（递归），保持文件里的顺序。
+    有些题共用同一个临时记忆库、依赖前面的题先写入（k10 存截止日期，k11 才查得到）；单独跑后一题会在空库上空通过或误判。"""
+    by_id = {c["id"]: c for c in cases}
+    wanted = set()
+
+    def add(cid):
+        if cid in wanted:
+            return
+        wanted.add(cid)
+        for dep in by_id[cid].get("requires", []):
+            if dep not in by_id:
+                raise SystemExit(f"{cid} 依赖的前置题 {dep} 不在题目文件里")
+            add(dep)
+
+    for cid in only:
+        add(cid)
+    return [c for c in cases if c["id"] in wanted]
+
+
 @contextmanager
 def isolated_memory():
     """评估期间把工具用的记忆库换成临时库，结束后换回原来的连接并删除临时库。"""
     saved = tools._memory_conn
+    saved_scope = tools.memory_scope()
     with tempfile.TemporaryDirectory() as d:
         conn = memory.connect(str(Path(d) / "eval_memory.sqlite3"))
         tools._memory_conn = conn
@@ -168,6 +189,7 @@ def isolated_memory():
             yield conn
         finally:
             tools._memory_conn = saved
+            tools.set_memory_scope(saved_scope)    # 题目切换过作用域，结束后换回原来的
             conn.close()
 
 
@@ -197,6 +219,7 @@ def run_case(client, case: dict, conn, session_id: str) -> dict:
         return approved
 
     history = agent.new_history()              # 每道题都是新会话
+    tools.set_memory_scope(case.get("scope", memory.DEFAULT_SCOPE))   # 记忆作用域题：按题目站到指定课题
     traces, result = [], None
     for text in case.get("turns") or [case["question"]]:
         history.append({"role": "user", "content": text})
@@ -389,7 +412,11 @@ def main() -> None:
         unknown = set(args.only) - {c["id"] for c in cases}
         if unknown:
             raise SystemExit(f"没有这些题号：{'、'.join(sorted(unknown))}")
-        cases = [c for c in cases if c["id"] in args.only]
+        chosen = select_with_requirements(cases, args.only)
+        added = [c["id"] for c in chosen if c["id"] not in args.only]
+        if added:
+            print(f"[提示] 连同前置题一起跑：{'、'.join(added)}")
+        cases = chosen
 
     client = build_client(load_api_key())
     agent.log = lambda tag, text: None         # 评估时不打印每一步（细节都在结果文件里），只打印每题判分

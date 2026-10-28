@@ -116,6 +116,15 @@ class RunCaseTest(unittest.TestCase):
         self.assertEqual((rec["status"], rec["tools_called"], rec["writes"][0]["approved"]),
                          ("ok", ["save_memory"], True))
 
+    def test_case_scope_is_applied_and_restored(self, _log):
+        before = tools.memory_scope()
+        rec = self.run_case({"id": "k07", "scope": "icu", "question": "记住：下次实验用 seed 42", "confirm": "y"},
+                            [reply(tool_calls=[("c1", "save_memory", '{"content": "下次实验用 seed 42"}')],
+                                   finish_reason="tool_calls"), reply("已记住")])
+        self.assertEqual(rec["memories"], ["下次实验用 seed 42"])
+        self.assertEqual(rec["traces"][0]["memory_scope"], "icu")                   # 日志里记的是题目指定的课题
+        self.assertEqual(tools.memory_scope(), before)                              # 跑完换回原来的作用域
+
     def test_confirm_defaults_to_no(self, _log):
         rec = self.run_case({"id": "x", "question": "记住：seed 42"},
                             [reply(tool_calls=[("c1", "save_memory", '{"content": "seed 42"}')],
@@ -130,6 +139,17 @@ class RunCaseTest(unittest.TestCase):
                              reply("均值 1")])
         self.assertEqual(len(rec["traces"]), 2)
         self.assertEqual(rec["answer_raw"], "均值 1")
+
+
+class SelectTest(unittest.TestCase):
+    def test_only_brings_required_cases_in_file_order(self):
+        cases = [{"id": "k07"}, {"id": "k08", "requires": ["k07"]}, {"id": "k10"}, {"id": "k11", "requires": ["k10"]}]
+        self.assertEqual([c["id"] for c in ea.select_with_requirements(cases, ["k11", "k08"])], ["k07", "k08", "k10", "k11"])
+        self.assertEqual([c["id"] for c in ea.select_with_requirements(cases, ["k07"])], ["k07"])
+
+    def test_missing_requirement_is_an_error(self):
+        with self.assertRaises(SystemExit):
+            ea.select_with_requirements([{"id": "a", "requires": ["zz"]}], ["a"])
 
 
 class TallyTest(unittest.TestCase):

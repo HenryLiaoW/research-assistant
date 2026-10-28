@@ -112,7 +112,9 @@ class MemoryScopeTests(unittest.TestCase):
         r = run_tool("save_memory", '{"content": "下次实验用 seed 42"}')
         self.assertEqual((r["ok"], r["scope"]), (True, "icu"))
         tools.set_memory_scope("kline")
-        self.assertEqual(run_tool("search_memory", '{"keyword": "seed"}')["results"], [])   # 换了课题就查不到
+        r = run_tool("search_memory", '{"keyword": "seed"}')
+        self.assertEqual(r["results"], [])                                                  # 换了课题就查不到
+        self.assertEqual(r["other_scopes_matching"], 1)                                     # 但知道别的课题有 1 条
         tools.set_memory_scope("icu")
         self.assertEqual([m["content"] for m in run_tool("search_memory", '{"keyword": "seed"}')["results"]],
                          ["下次实验用 seed 42"])

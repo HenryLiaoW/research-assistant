@@ -8,7 +8,8 @@ chat.py — 阶段 2（上半）：多轮对话。同一次运行里，模型能
     /new       清空会话历史，重新开始（只保留系统提示）
     /history   显示当前历史里有多少条消息、多少个回合
     /memories  列出当前课题（作用域）里的有效记忆（直接读数据库，不经过模型）
-    /scope     显示当前课题和各课题的记忆数；/scope <名字> 切换课题（之后的记忆写入和检索都只在这个课题里）
+    /scope     显示当前课题和各课题的记忆数；/scope <名字> 切换课题（之后的记忆写入只进这个课题，检索返回这个课题 + 全局）
+               /scope global 切到全局：在这里"记住"的事所有课题都能查到（如论文截止日期）
     /quit      退出（Ctrl-D 或 Ctrl-C 也可以）
 
 两种记忆：会话历史只在内存里、按回合裁剪、程序退出即失；长期记忆在 SQLite 文件里，
@@ -93,7 +94,14 @@ def main() -> None:
             name = text[len("/scope"):].strip()
             if name:
                 r = tools.set_memory_scope(name)
-                print(f"[memory] 已切换到课题「{r['scope']}」。" if r["ok"] else f"[memory] {r['error']}")
+                if not r["ok"]:
+                    print(f"[memory] {r['error']}")
+                elif r["scope"] == memory.GLOBAL_SCOPE:
+                    print("[memory] 已切换到全局（global）：这里的记忆在所有课题下都能查到。")
+                elif not memory.list_all(memory_conn, r["scope"]):
+                    print(f"[memory] 已切换到课题「{r['scope']}」（目前没有记忆，是个新课题；打错名字的话请重新 /scope）。")
+                else:
+                    print(f"[memory] 已切换到课题「{r['scope']}」。")
             else:
                 print(f"[memory] 当前课题：{tools.memory_scope()}")
                 for s in memory.scopes(memory_conn):
