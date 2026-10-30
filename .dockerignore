@@ -23,3 +23,6 @@ screenshots/
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+# 毕设实验原始输出（DataAgent 导入用，含论文结果）
+data/raw_results/

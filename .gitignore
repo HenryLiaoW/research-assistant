@@ -25,3 +25,6 @@ index/
 
 # 本地评估结果（检索到的页码、章节名和分数；不进 git）
 eval/local/
+
+# 毕设实验原始输出（DataAgent 导入用，含论文结果）
+data/raw_results/

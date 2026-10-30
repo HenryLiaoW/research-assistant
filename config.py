@@ -48,6 +48,11 @@ DATA_DIR = "data"          # 工具只能读这个目录里的 .csv（相对项�
 MAX_CSV_ROWS = 10000       # 单个文件最多读多少行，超过直接拒绝
 MAX_GROUPS = 20            # 分组统计最多多少组，防止把几千组塞回给模型
 
+# ---- 实验结果数据库（DataAgent）----
+# 由 scripts/import_results.py 从毕设原始输出生成；只读查询用，不进 git（*.sqlite3）
+RESULTS_DB_PATH = os.environ.get("RESULTS_DB_PATH", "data/results.sqlite3")
+RESULTS_RAW_DIR = "data/raw_results"   # 导入用的毕设原始输出（只拷了导入用到的约 500 个小文件，约 7 MB）；不进 git
+
 # ---- 资料检索（阶段 4）----
 DOCS_DIR = "docs"          # 资料 PDF 所在目录；除合成样例外不进 git
 
