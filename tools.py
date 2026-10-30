@@ -14,7 +14,7 @@ import math
 import statistics
 
 import config
-import csv_tools
+import data_tools
 import documents
 import memory
 import retrieval
@@ -31,6 +31,17 @@ def _search_description() -> str:
     if files:
         text += f"资料库现有文件：{'、'.join(files)}。用户指明了某一份时，用 file 参数只在它里面检索。"
     return text
+
+
+def _query_description() -> str:
+    """query_results 的说明：表结构和列含义从数据库的元数据表读出（进程启动时读一次）。
+    新数据用导入脚本登记后，重启程序即可查询，不用改这里。数据库不存在时如实说明。"""
+    text = (f"用只读 SQL 查询实验结果数据库（SQLite）。只能执行一条 SELECT，最多返回 {config.QUERY_MAX_ROWS} 行，"
+            "比较、求差、排序、计数、平均都在 SQL 里完成。可查询的表：\n")
+    try:
+        return text + data_tools.describe_catalog(config.RESULTS_DB_PATH)
+    except Exception as e:      # 数据库没生成：工具仍在菜单里，调用时会返回原因
+        return text + f"（当前不可用：{e}）"
 
 
 TOOLS = [
@@ -106,48 +117,17 @@ TOOLS = [
             },
         },
     },
-        {
-        "type": "function",
-        "function": {
-            "name": "list_experiment_files",
-            "description": "列出实验数据目录里有哪些 CSV 文件（文件名和大小）。不确定有哪些文件时先调用。",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
     {
         "type": "function",
         "function": {
-            "name": "describe_experiment_file",
-            "description": (
-                "查看一个实验 CSV 文件的表头：总行数，以及每列的名字、类型、是否数值列、缺失数、不同取值个数。"
-                "不返回原始数据。调用 group_statistics 之前用它确认列名。"
-            ),
+            "name": "query_results",
+            "description": _query_description(),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string", "description": "文件名，必须来自 list_experiment_files 的结果，如 sample_results.csv"}
+                    "sql": {"type": "string", "description": "一条只读 SQLite SELECT 语句；只能查询说明里列出的表"},
                 },
-                "required": ["file"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "group_statistics",
-            "description": (
-                "对实验 CSV 文件里的一个数值列做描述统计，可按另一列分组。"
-                "每组返回 count（有效值个数）、missing（缺失个数）、mean、min、max、population_std（总体标准差）。"
-                "只返回汇总，不返回原始行。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {"type": "string", "description": "文件名，必须来自 list_experiment_files 的结果"},
-                    "value_column": {"type": "string", "description": "要统计的数值列名，必须来自 describe_experiment_file 的结果"},
-                    "group_by": {"type": "string", "description": "按哪一列分组；不分组时省略"},
-                },
-                "required": ["file", "value_column"],
+                "required": ["sql"],
             },
         },
     },
@@ -270,22 +250,21 @@ def memory_scopes() -> list:
 
 
 
-# ---- 受限 CSV 工具（阶段 3）：薄薄一层，把 csv_tools.py 的函数包成工具 ----
-# 模型只给文件名和列名；目录和上限由这里从 config 补上，模型无法指定读哪个目录。
-def list_experiment_files() -> dict:
-    """列出数据目录里的 CSV。谁调用：run_tool()。没有参数。"""
-    return csv_tools.list_files(config.DATA_DIR)
+# ---- 实验结果查询（DataAgent）：薄薄一层，把 data_tools.query 包成工具 ----
+# 模型只给 SQL；数据库路径、行数和时间上限由这里从 config 补上。安全检查在 data_tools 里由 SQLite 引擎执行。
+def query_results(sql) -> dict:
+    """只读 SQL 查询。谁调用：run_tool()。输入：一条 SELECT。输出：ok + columns + rows + truncated。"""
+    return data_tools.query(config.RESULTS_DB_PATH, sql, config.QUERY_MAX_ROWS,
+                            config.QUERY_TIMEOUT_SECONDS, config.QUERY_MAX_SQL_CHARS)
 
 
-def describe_experiment_file(file) -> dict:
-    """看表头。谁调用：run_tool()。输入：文件名。"""
-    return csv_tools.describe_file(config.DATA_DIR, file, config.MAX_CSV_ROWS)
-
-
-def group_statistics(file, value_column, group_by=None) -> dict:
-    """分组统计。谁调用：run_tool()。输入：文件名、值列、可选的分组列。"""
-    return csv_tools.group_stats(config.DATA_DIR, file, value_column, group_by,
-                                 config.MAX_CSV_ROWS, config.MAX_GROUPS)
+def data_tables() -> list:
+    """可查询的表（名字、行数、说明），给网页资料面板用。不是模型工具。数据库不存在时返回空列表。"""
+    try:
+        return [{"name": n, "rows": t["rows"], "description": t["description"]}
+                for n, t in data_tools.catalog(config.RESULTS_DB_PATH).items()]
+    except (FileNotFoundError, Exception):
+        return []
 
 
 
@@ -348,9 +327,7 @@ TOOL_IMPLEMENTATIONS = {
     "save_memory": save_memory,
     "search_memory": search_memory,
     "forget_memory": forget_memory,
-    "list_experiment_files": list_experiment_files,
-    "describe_experiment_file": describe_experiment_file,
-    "group_statistics": group_statistics,
+    "query_results": query_results,
     "search_documents": search_documents,
 }
 

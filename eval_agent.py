@@ -29,7 +29,7 @@ eval_agent.py — 端到端评估（阶段 4f）：用固定题目跑完整的 A
 
 不会读写你的长期记忆：每次运行把工具用的记忆库换成一个临时库，跑完即删。
 写操作的确认按题目里的 confirm 字段代答（没写就拒绝）。题目的 scope 字段设定这道题运行时的记忆作用域（默认 default）。
-会发给模型 API 的内容和 chat.py 相同：题目、检索到的论文片段、CSV 统计汇总、临时记忆库里的内容。
+会发给模型 API 的内容和 chat.py 相同：题目、检索到的论文片段、SQL 查询结果、临时记忆库里的内容。
 结果存在 eval/local/（不进 git）：里面有检索到的论文原文，供人工判分对照。
 """
 
@@ -59,7 +59,8 @@ RESULTS_DIR = Path("eval/local")
 EVIDENCE_FILE = "dissertation.pdf"      # 题目里的证据页指的是这份文件的 PDF 页码
 CHECKS = ["status", "tools", "content", "abstain", "retrieval", "cite_valid", "cite_hit", "memory"]
 CATEGORY_NAMES = {"doc": "论文问答", "doc_implicit": "论文问答·没说论文", "abstain": "资料外", "mixed": "论文+CSV",
-                  "tool": "工具与数字", "memory": "长期记忆", "injection": "提示注入"}
+                  "tool": "工具与数字", "memory": "长期记忆", "injection": "提示注入",
+                  "data": "数据问答"}
 # 回答里出现其中任意一个，就算"明确说了没有"。只是初筛，资料外的题还要人工复核。
 ABSTAIN_MARKERS = ["没有提到", "没有提及", "未提及", "没有找到", "没找到", "未找到", "找不到", "没有查到", "未查到",
                    "查不到", "没有记录", "没有相关", "没有关于", "没有涉及", "没有说明", "未说明", "没有给出", "未给出",

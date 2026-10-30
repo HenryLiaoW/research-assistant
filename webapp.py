@@ -12,7 +12,7 @@ webapp.py — 网页界面的后端（阶段 5）：把 run_agent 包成几个 H
     GET  /api/status                检索模型是否加载好、现在是否在忙
     GET  /api/memories              记忆面板：全部有效记忆
     DELETE /api/memories/<id>       记忆面板：删除一条（软删除）。页面上先让用户再点一次确认才发这个请求
-    GET  /api/sources               资料面板：docs/ 里的 PDF、索引是否过期、data/ 里的 CSV
+    GET  /api/sources               资料面板：docs/ 里的 PDF、索引是否过期、实验数据库里可查询的表
 
 怎么运行一条消息：接口立刻返回 job_id，run_agent 在后台线程里跑，页面每隔半秒查一次进度。
 - 执行步骤：run_agent 边做边往记录本（trace）里记模型调用和工具调用，查进度时直接读它，agent.py 不用为网页改。
@@ -41,7 +41,6 @@ from openai import OpenAIError
 import agent
 import citations
 import config
-import csv_tools
 import documents
 import retrieval
 import tools
@@ -242,11 +241,10 @@ def create_app(client, confirm_timeout=None, warmup=True) -> Flask:
         """资料面板。只返回文件名、大小、段数和索引信息，不返回资料内容；不加载模型，但会重算 PDF 指纹（很快）。"""
         files = documents.pdf_files(config.DOCS_DIR)
         idx = retrieval.index_status(config.INDEX_DIR, files)
-        csv = csv_tools.list_files(config.DATA_DIR)
         return jsonify(docs=[{"name": p.name, "size_bytes": p.stat().st_size, "chunks": idx["per_file"].get(p.name, 0)}
                              for p in files],
                        index={k: idx.get(k) for k in ("exists", "model", "built_at", "chunks", "chunk_size", "stale")},
-                       data_files=csv.get("files", []),
+                       data_tables=tools.data_tables(),
                        search_ready=state["search_ready"], search_error=state["search_error"])
 
     @app.post("/api/sessions/reset")

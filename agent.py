@@ -54,6 +54,9 @@ def summarize_result(name: str, result: dict) -> str:
         parts = [f"{r.get('evidence_id')} {r.get('file')} 第 {r.get('page')} 页（{r.get('score')}）"
                  for r in result.get("results", [])]
         return f"{len(parts)} 段：" + "；".join(parts)
+    if name == "query_results" and result.get("ok"):
+        cut = "，已截断" if result.get("truncated") else ""
+        return f"{result.get('row_count')} 行{cut}；列 {', '.join(map(str, result.get('columns', [])))}"
     text = json.dumps(result, ensure_ascii=False)
     if len(text) <= SUMMARY_CHARS:
         return text

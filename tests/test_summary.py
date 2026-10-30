@@ -13,12 +13,18 @@ class SummaryTest(unittest.TestCase):
         line = summarize_result("search_documents", result)
         self.assertEqual(line, "2 段：E4 dissertation.pdf 第 74 页（0.8272）；E5 dissertation.pdf 第 71 页（0.8238）")
 
+    def test_query_results_line(self):
+        result = {"ok": True, "columns": ["encoder", "ari"], "rows": [["GRU", 0.6]] * 3, "row_count": 3, "truncated": False}
+        self.assertEqual(summarize_result("query_results", result), "3 行；列 encoder, ari")
+        result["truncated"] = True
+        self.assertIn("已截断", summarize_result("query_results", result))
+
     def test_short_result_shown_in_full(self):
         self.assertEqual(summarize_result("save_memory", {"ok": True, "id": 3}), '{"ok": true, "id": 3}')
 
     def test_long_result_is_cut(self):
         result = {"ok": True, "groups": ["x" * 50] * 20}
-        line = summarize_result("group_statistics", result)
+        line = summarize_result("calculate_stats", result)
         self.assertTrue(line.startswith('{"ok": true'))
         self.assertIn("完整结果已发给模型", line)
         self.assertLess(len(line), SUMMARY_CHARS + 40)

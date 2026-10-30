@@ -9,7 +9,7 @@
 ## 当前能做什么
 
 - **检索论文并引用来源**：模型调用 `search_documents`，在本地向量索引里检索相关段落（默认前 3 个）。程序给每个段落分配证据编号（E1、E2…，整段对话内不重复），模型在回答里写 `[E1]`，程序据此在回答末尾补上"文件 · 页码 · 章节"。模型写了检索结果里不存在的编号会被标为无效引用；检索过却没有引用会给出警告。资料是英文，工具说明要求模型用英文写检索词。资料库里有多份文件时，用户指明了哪一份（"样例协议里……"），模型用 `file` 参数只在那份文件里检索——过滤在取前 k 个之前做，小文件的段落不会被大文件挤掉。建索引时记下每个 PDF 的 SHA-256 指纹；之后资料新增、删除或内容改动，检索会拒绝使用旧索引并提示重建，不会用过期内容作答。
-- **实验结果统计**：`list_experiment_files` / `describe_experiment_file` / `group_statistics` 只读 `data/` 目录里的 `.csv`，按列分组算数量、缺失数、非有限值数、均值、最值、总体标准差。模型只给文件名和列名，数字由 Python 计算，只把汇总交给模型。
+- **实验结果查询（DataAgent）**：毕设实验结果（论文最终版 160 次训练、测试集评估、对照实验、聚类画像）导入本地 SQLite，导入时与论文表 4.1 / 4.4 / 4.6 逐项核对。模型用 `query_results` 写一条只读 SELECT，筛选、跨表关联、成对比较、派生指标都在 SQL 里完成。安全由引擎和代码保证：只读打开、SQLite authorizer 只放行 SELECT 和登记过的表、单条语句、行数上限、超时中断。表结构和列含义存在库里的元数据表，任何 CSV 用 `scripts/import_csv.py` 导入并登记后，不改代码即可查询。
 - **长期记忆**：用户说"记住"时模型请求 `save_memory`，说"忘掉"时请求 `forget_memory`（软删除）。**两个写操作都要在终端输入 y 才执行**，默认不执行；确认由代码强制，不依赖提示词。问到自己的事实时模型调用 `search_memory`。存储是 SQLite（`memory.sqlite3`，不进 git），所有 SQL 参数化。记忆**按课题隔离**：`/scope <名字>` 设定当前课题，之后写入的记忆都盖上它，检索只返回当前课题 + 全局（`/scope global` 下记的事所有课题可见），其他课题一条不出现——过滤在 SQL 里做，作用域由用户设定、程序盖章，模型没有这个参数。查不到时会说明是当前课题下没有、其他课题有几条相关记忆。
 - **多轮对话**：`python chat.py`。`/new` 重开，`/history` 查看，`/memories` 列出当前课题的记忆，`/scope` 查看或切换课题，`/quit` 退出。历史只保留最近 `MAX_HISTORY_TURNS` 个回合，按整回合裁剪；一轮出错时回滚到这一轮的用户消息之前。
 - **端到端评估**：`eval_agent.py` 用固定题目跑完整的 Agent（真实调用模型 API），自动检查工具选择、数字和关键词、检索命中、引用、拒答和记忆行为，并生成人工判分表（回答正确、引用支持）。写记忆用临时库，确认由脚本代答。题目文件含论文结果数字，只保存在作者本机（`eval/local/`）。
@@ -37,21 +37,7 @@
 
 已人工对照第 22 页原文，回答与原文一致。
 
-**2. 多步工具调用**：模型先查看 CSV 有哪些列，再用查到的列名请求分组统计。
-
-```text
-你：data/sample_results.csv 里不同 config 的 c_index 平均是多少？
-[tool-call] 模型请求调用 describe_experiment_file，参数 {"file": "sample_results.csv"}
-[tool-call] 模型请求调用 group_statistics，参数 {"file": "sample_results.csv", "value_column": "c_index", "group_by": "config"}
-
-助手：
-| config | 有效值 | 缺失 | 均值 | 最小 | 最大 | 总体标准差 |
-|---|---|---|---|---|---|---|
-| baseline | 10 | 0 | 0.657 | 0.63 | 0.68 | 0.0142 |
-| survival_sup | 9 | 1 | 0.711 | 0.69 | 0.73 | 0.0110 |
-| survival_sup_aug | 10 | 0 | 0.724 | 0.71 | 0.74 | 0.0080 |
-其中 survival_sup 组有 1 个缺失值，因此该组均值基于 9 个有效值。
-```
+**2. 实验数据问答**：示例会在 DataAgent 基线评估后用真实运行记录补上。
 
 **3. 写记忆前确认**：第一次输入 N，工具没有执行，模型也没有自动重试；第二次输入 y 才写入。
 
@@ -209,13 +195,13 @@ docker compose run --rm app python -m unittest discover -s tests -t .   # 211 �
 | `eval_retrieval.py` | 检索评估：完整召回@k、召回@k、MRR、检索耗时；结果存 `eval/local/`（不进 git） |
 | `eval_agent.py` | 端到端评估：逐题运行 Agent、自动判分（`score_case`）、汇总多次运行的稳定性、生成人工判分表（`--tally` 汇总）、改了标准答案后不调 API 重新判分（`--rescore`）；`--cases` 换题目文件（如注入题） |
 | `translate_questions.py` | 把评估题翻译成英文（一题一次请求，检查译文没有凭空多出数字） |
-| `csv_tools.py` | 受限 CSV 统计：路径白名单、行数上限、`list_files / describe_file / group_stats`；只返回汇总 |
+| `data_tools.py` | DataAgent：数据目录（`meta_tables / meta_columns / meta_notes`，`register_table`、`catalog`、`describe_catalog`、`render_markdown`）与只读查询 `query`（只读连接、authorizer、单条语句、行数上限、超时） |
 | `memory.py` | SQLite 存储层：`connect / save / search / forget / list_all / scopes`，软删除，参数化 SQL；`scope` 列按课题隔离（旧库自动迁移），检索合并当前课题 + 全局并让当前课题优先，空结果时给出其他课题的匹配条数 |
 | `ask.py` | 阶段 0：一次请求 |
-| `data/` | CSV 工具允许读取的唯一目录；`sample_results.csv` 为合成演示数据 |
+| `data/` | `results.sqlite3` 分析数据库（不进 git）及自动生成的数据字典 `results_schema.md`；`raw_results/` 毕设原始输出（不进 git）；`sample_results.csv` 为合成示例数据，导入为 `sample_results` 表 |
 | `docs/` | 资料 PDF；只有合成样例 `sample_protocol.pdf`（投毒文档）进 git |
 | `eval/` | 检索评估题（开发集、留出集及英文译文）、提示注入对抗题 `injection_cases.json`、每阶段的人工跑测记录 `cases.md` |
-| `scripts/` | `make_poisonous_protocol.py`：生成投毒样例 PDF |
+| `scripts/` | `import_results.py`：导入毕设结果并与论文表格核对；`import_csv.py`：任意 CSV 导入并登记；`make_poisonous_protocol.py`：生成投毒样例 PDF |
 | `tests/` | 离线单元测试（233 个，用假客户端，不调用 API）：工具边界、历史裁剪与回滚、记忆、CSV 与路径攻击、分块、索引、检索、评估打分、引用、写入确认、计时口径、运行日志、索引过期检查、端到端评估的判分规则、网页接口（后台任务、页面确认与超时、一次一条、出错回滚、证据原文、记忆面板、资料面板、Host 检查） |
 | `screenshots/` | README 里的网页截图 |
 | `NOTES.md` | 每阶段的学习记录、实验和设计取舍 |

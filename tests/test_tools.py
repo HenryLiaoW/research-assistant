@@ -139,36 +139,56 @@ class MemoryScopeTests(unittest.TestCase):
         self.assertEqual(tools.memory_scopes(), [{"scope": "icu", "count": 1}, {"scope": "kline", "count": 1}])
 
 
-class CsvToolDispatchTests(unittest.TestCase):
-    """阶段 3：CSV 工具经过 run_tool 调度，和模型真实调用时走同一条路。读项目里的 data/sample_results.csv。"""
+class QueryResultsDispatchTests(unittest.TestCase):
+    """DataAgent：query_results 经过 run_tool 调度，和模型真实调用时走同一条路。用临时数据库，不依赖真实数据。"""
+
+    def setUp(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import data_tools
+        self.tmp = tempfile.TemporaryDirectory()
+        db = str(Path(self.tmp.name) / "r.sqlite3")
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE runs (config_id TEXT, seed INTEGER, ari REAL)")
+        conn.executemany("INSERT INTO runs VALUES (?, ?, ?)", [("A", 0, 0.5), ("A", 1, 0.7), ("B", 0, 0.3)])
+        data_tools.register_table(conn, "runs", "训练表", "测试")
+        conn.commit()
+        conn.close()
+        self.patch = patch("tools.config.RESULTS_DB_PATH", db)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
 
     def test_menu_and_registry_match(self):
         # 菜单里的名字和登记表的名字必须一一对应，拼错一个字模型就调不到
         menu_names = {t["function"]["name"] for t in tools.TOOLS}
         self.assertEqual(menu_names, set(tools.TOOL_IMPLEMENTATIONS))
 
-    def test_group_statistics_through_dispatcher(self):
-        r = run_tool("group_statistics",
-                     '{"file": "sample_results.csv", "value_column": "c_index", "group_by": "config"}')
-        self.assertTrue(r["ok"])
-        self.assertEqual([g["group"] for g in r["groups"]], ["baseline", "survival_sup", "survival_sup_aug"])
+    def test_old_csv_tools_are_gone(self):
+        self.assertFalse({"list_experiment_files", "describe_experiment_file", "group_statistics"} & set(tools.TOOL_IMPLEMENTATIONS))
+
+    def test_query_through_dispatcher(self):
+        r = run_tool("query_results", json.dumps({"sql": "SELECT config_id, AVG(ari) FROM runs GROUP BY config_id ORDER BY 1"}))
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["rows"], [["A", 0.6], ["B", 0.3]])
         json.dumps(r, ensure_ascii=False)   # agent.py 要做的事，必须不报错
 
-    def test_group_by_is_optional(self):
-        for args in ('{"file": "sample_results.csv", "value_column": "ari"}',
-                     '{"file": "sample_results.csv", "value_column": "ari", "group_by": null}'):
-            r = run_tool("group_statistics", args)
-            self.assertTrue(r["ok"], args)
-            self.assertEqual(r["groups"][0]["count"], 30)
+    def test_write_is_refused_through_dispatcher(self):
+        r = run_tool("query_results", '{"sql": "DELETE FROM runs"}')
+        self.assertFalse(r["ok"])
+        self.assertEqual(run_tool("query_results", '{"sql": "SELECT COUNT(*) FROM runs"}')["rows"], [[3]])
 
-    def test_path_attack_through_dispatcher(self):
-        r = run_tool("describe_experiment_file", '{"file": "../.env"}')
+    def test_model_cannot_choose_database(self):
+        r = run_tool("query_results", '{"sql": "SELECT 1", "db_path": "/etc/passwd"}')   # 菜单里没有这个参数，硬塞也不行
         self.assertFalse(r["ok"])
 
-    def test_model_cannot_choose_directory(self):
-        self.assertTrue(run_tool("list_experiment_files", "{}")["ok"])
-        r = run_tool("list_experiment_files", '{"data_dir": "/"}')   # 菜单里没有这个参数，硬塞也不行
-        self.assertFalse(r["ok"])
+    def test_data_tables_for_panel(self):
+        self.assertEqual(tools.data_tables(), [{"name": "runs", "rows": 3, "description": "训练表"}])
+
 
 if __name__ == "__main__":
     unittest.main()

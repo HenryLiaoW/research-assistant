@@ -184,28 +184,27 @@ class WebAppTest(unittest.TestCase):
 
     def test_sources_panel_reports_stale_index(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        docs, index, data = tmp / "docs", tmp / "index", tmp / "data"
-        for d in (docs, data):
-            d.mkdir()
+        docs, index = tmp / "docs", tmp / "index"
+        docs.mkdir()
         (docs / "d.pdf").write_bytes(b"fake pdf")
-        (data / "r.csv").write_text("a,b\n1,2\n", encoding="utf-8")
         retrieval.save_index(index, CHUNKS, np.zeros((2, 4), dtype=np.float32),
                              {"model": "m", "chunk_size": 500, "sources": retrieval.source_fingerprints(documents.pdf_files(docs))})
         (docs / "new.pdf").write_bytes(b"added later")
         with patch("webapp.config.DOCS_DIR", str(docs)), patch("webapp.config.INDEX_DIR", str(index)), \
-                patch("webapp.config.DATA_DIR", str(data)):
+                patch("tools.data_tables", return_value=[{"name": "runs", "rows": 160, "description": "训练表"}]):
             s = self.app().get("/api/sources").get_json()
         self.assertEqual([(d["name"], d["chunks"]) for d in s["docs"]], [("d.pdf", 2), ("new.pdf", 0)])
         self.assertEqual(s["index"]["stale"], ["新增了 new.pdf"])
-        self.assertEqual([f["name"] for f in s["data_files"]], ["r.csv"])
+        self.assertEqual([t["name"] for t in s["data_tables"]], ["runs"])
 
     def test_sources_panel_without_index(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         with patch("webapp.config.DOCS_DIR", str(tmp)), patch("webapp.config.INDEX_DIR", str(tmp / "none")), \
-                patch("webapp.config.DATA_DIR", str(tmp)):
+                patch("tools.config.RESULTS_DB_PATH", str(tmp / "none.sqlite3")):
             s = self.app().get("/api/sources").get_json()
         self.assertFalse(s["index"]["exists"])
         self.assertIn("build_index.py", s["index"]["stale"][0])
+        self.assertEqual(s["data_tables"], [])          # 没有数据库时不报错，返回空列表
 
     def test_other_host_names_are_rejected(self):
         http = self.app()

@@ -1,6 +1,6 @@
 /*
  * 网页前端（阶段 5b）：发消息 → 每 400 毫秒查一次进度 → 显示执行步骤、确认弹窗、最终回答。
- * 阶段 5c：侧边栏三个页签——原文（点 [E1] 看片段原文）、记忆（查看和删除长期记忆）、资料（PDF、索引、CSV 的状态）。
+ * 阶段 5c：侧边栏三个页签——原文（点 [E1] 看片段原文）、记忆（查看和删除长期记忆）、资料（PDF、索引、实验数据表的状态）。
  * 安全：模型和工具返回的文字一律先转义再显示（escapeHtml），不直接当 HTML 插入页面。
  */
 
@@ -9,9 +9,7 @@ const POLL_MS = 400;
 const TOOL_NAMES = {
   search_documents: "检索论文",
   calculate_stats: "计算统计量",
-  list_experiment_files: "列出实验文件",
-  describe_experiment_file: "查看表头",
-  group_statistics: "分组统计",
+  query_results: "查询实验数据",
   save_memory: "保存记忆",
   search_memory: "查找记忆",
   forget_memory: "删除记忆",
@@ -344,9 +342,10 @@ function sourcesHtml(s) {
   }
   html += `<dt>检索模型</dt><dd>${model}</dd></dl>`;
   if (s.search_error) html += `<div class="notice error">${escapeHtml(s.search_error)}</div>`;
-  html += `<div class="panel-subtitle">实验数据 · data/</div>`;
-  html += s.data_files.length ? files(s.data_files, (f) => fmtSize(f.size_bytes)) : `<p class="hint">data/ 里还没有 CSV。</p>`;
-  html += `<p class="hint">检索在本机完成。发给模型 API 的是对话内容和工具结果（检索到的片段、统计结果、记忆）；整篇 PDF 和 CSV 的原始行不会发出去。</p>`;
+  html += `<div class="panel-subtitle">实验数据 · data/results.sqlite3</div>`;
+  html += s.data_tables.length ? files(s.data_tables, (t) => `${escapeHtml(t.rows)} 行`)
+    : `<p class="hint">还没有实验数据库。运行 <code>python scripts/import_results.py</code> 导入。</p>`;
+  html += `<p class="hint">检索和查询都在本机完成。发给模型 API 的是对话内容和工具结果（检索到的片段、查询结果、记忆）；整篇 PDF 和整个数据库不会发出去。</p>`;
   return html;
 }
 

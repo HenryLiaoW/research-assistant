@@ -10,7 +10,7 @@ tracing.py — 运行日志（阶段 4e）：每条用户请求在 logs/trace-<�
 
 记录：问题和最终回答原文；每次模型调用的 finish_reason、token、耗时；每次工具调用的名称、参数、成败、
 耗时、等待确认的时间；检索结果的证据编号、chunk_id 和分数；索引的嵌入模型和建立时间。
-不记录：API 密钥；检索段落的原文、CSV 统计结果、记忆检索结果的内容（要看原文时按 chunk_id 回索引里找）。
+不记录：API 密钥；检索段落的原文、SQL 查询结果的行、记忆检索结果的内容（要看原文时按 chunk_id 回索引里找）。
 日志只写在本机 config.TRACE_DIR（已在 .gitignore 里），不会发给任何服务；config.TRACE_ENABLED = False 可关闭。
 """
 
@@ -51,6 +51,11 @@ def tool_entry(round_no: int, record: dict) -> dict:
         entry["wait_ms"] = record["wait_ms"]
     if not result.get("ok"):
         entry["error"] = result.get("error")
+    elif record["tool"] == "query_results":
+        # 记 SQL 和规模，不记结果行（结果里是实验数字，要看时用同一条 SQL 重查）
+        entry["sql"] = result.get("sql")
+        entry["row_count"] = result.get("row_count")
+        entry["truncated"] = result.get("truncated")
     elif record["tool"] == "search_documents":
         # 只记编号和分数，段落原文不进日志
         entry["results"] = [{"evidence_id": r.get("evidence_id"), "chunk_id": r.get("chunk_id"), "score": r.get("score")}

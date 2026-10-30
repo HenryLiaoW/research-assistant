@@ -116,7 +116,7 @@ dev.append(case("d03", "参考配置下，同一个种子的 GRU 和 MLP 比验�
 dg = cell_row("gru", 1, 1, 3).seed_level_mean - cell_row("gru", 0, 1, 3).seed_level_mean
 dm = cell_row("mlp", 1, 1, 3).seed_level_mean - cell_row("mlp", 0, 1, 3).seed_level_mean
 dev.append(case("d04", "K=3、加平衡项时，预训练让 GRU 和 MLP 的种子级 ARI 各变化了多少？",
-                [dg, dm], f"GRU {cell_row('gru', 0, 1, 3).seed_level_mean:.3f} → {cell_row('gru', 1, 1, 3).seed_level_mean:.3f}"
+                [dg, dm, "塌缩"], f"GRU {cell_row('gru', 0, 1, 3).seed_level_mean:.3f} → {cell_row('gru', 1, 1, 3).seed_level_mean:.3f}"
                           f"（{dg:+.3f}）；MLP {cell_row('mlp', 0, 1, 3).seed_level_mean:.4f} → {cell_row('mlp', 1, 1, 3).seed_level_mean:.4f}"
                           f"（{dm:+.4f}），且预训练的 MLP 全部塌缩"))
 
@@ -133,7 +133,7 @@ mc["lr_med"] = [logrank[(logrank.encoder == "mlp") & (logrank.K == r.k) & (logra
                 .logrank_stat.median() for r in mc.itertuples()]
 lo = mc.sort_values("lr_med").iloc[0]
 dev.append(case("d06", "MLP 出现过塌缩的配置里，验证集 log-rank 中位数最低的是哪个？它的种子级 ARI 是多少？",
-                [lo.seed_level_mean], f"{cell_name('mlp', lo.p, lo.b, lo.k)}，log-rank 中位数 {lo.lr_med:.2f}，"
+                [lo.seed_level_mean, "塌缩"], f"{cell_name('mlp', lo.p, lo.b, lo.k)}，log-rank 中位数 {lo.lr_med:.2f}，"
                                       f"种子级 ARI {lo.seed_level_mean:.3f}"))
 
 # d07 GRU 参考配置里最不一致的种子
