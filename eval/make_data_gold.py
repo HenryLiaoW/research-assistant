@@ -197,14 +197,14 @@ dev.append(case("d16", "加不加平衡项，对哪个配置的种子级 ARI 影
                 f"{big[0].upper()}、{'预训练' if big[1] else '不预训练'}、K={big[2]}：加平衡后变化 {big[3]:+.4f}；"
                 + "；".join(f"{e.upper()} p{p} K{k}: {d:+.4f}" for e, p, k, d in eff)))
 
-# d17 测试集死亡率最高簇对应验证集名次
+# d17 测试集死亡率最高簇对应验证集名次（百分数写法按 1 位小数比：23.7%）
 cons = analysis["consensus"]["gru"]
 rb = max(range(3), key=lambda i: cons["mortality"][i])
 ref = next(m["reference_label"] for m in analysis["clinical_label_mapping"] if m["rebuilt_label"] == rb)
 vrank = psummary["gru"]["b_label_to_rank"][str(ref)]
 vmort = psummary["gru"]["cluster_mortality"][str(ref)]
 dev.append(case("d17", "测试集上死亡率最高的簇，对应 GRU 验证集的哪个死亡率名次？这个簇在验证集上的死亡率是多少？",
-                [[vmort, vmort * 100]], f"对应验证集死亡率名次 {vrank}（最高）；验证集死亡率 {vmort:.1%}，测试集 {cons['mortality'][rb]:.1%}"))
+                [[vmort, round(vmort * 100, 1)]], f"对应验证集死亡率名次 {vrank}（最高）；验证集死亡率 {vmort:.1%}，测试集 {cons['mortality'][rb]:.1%}"))
 
 # d18 简单题
 mci_mean = sum(mci.values()) / 10
