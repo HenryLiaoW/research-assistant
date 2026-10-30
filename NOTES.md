@@ -340,8 +340,9 @@ token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631�
 
 ## DataAgent 块 1 —— 实验结果导入数据库（2026-10-30）
 
-- 目的：把毕设实验的原始输出整理成 SQLite（data/results.sqlite3），后续给只读 SQL 工具查询。原始数据拷在项目内 data/raw_results/（只拷导入用到的文件，约 7 MB），原始数据和库都不进 git。
-- 内容：16 种配置 × 10 个种子共 160 次验证集训练（指标 + 聚类标签）、端点 B 测试集最终评估、对照实验、验证集和测试集聚类画像，共 11 张表；数据字典 data/results_schema.md。
+- 目的：把毕设实验的原始输出整理成 SQLite（data/results.sqlite3），后续给只读 SQL 工具查询。原始数据拷在项目内 data/raw_results/，原始数据和库都不进 git。
+- 内容：论文最终版（端点 B）16 种配置 × 10 个种子共 160 次验证集训练（指标 + 聚类标签）、测试集最终评估、对照实验、验证集与测试集聚类画像，共 11 张表；数据字典 data/results_schema.md。
 - 跨种子 ARI 由聚类标签重算（numpy 实现，公式与 sklearn 相同，测试里用 sklearn 文档的例子核对），不抄汇总表。
-- 导入自带核对：从库里用 SQL 重算 16 个格子的种子级 ARI 及标准差、塌缩率、最小簇占比、平均 C-index，与论文冻结的 RESULTS.json（MLP，4 位小数）和 analyze_2x2_gru.txt（GRU，3 位小数）逐项比对；测试集 ARI 0.474 / 0.364、MLP C-index 中位数 0.755、打乱结局对照 C-index 中位数 0.503 一并核对；测试集 90 对 ARI 由推理标签重算，与 analysis.json 最大误差 0。任何一项不符就不写库。
+- 导入自带核对，以论文正文为基准：表 4.1（16 个格子 × 种子级 ARI、SD、塌缩次数、平均最小簇占比、log-rank 中位数，80/80）、最终版 cell_summary.csv 全精度（48/48）、表 4.4 与 4.5 节的簇大小、死亡率和最大效应（15/15）、表 4.6 测试集 ARI 和 C-index、对照 C-index 0.503（7/7）。任何一项不符就不写库。
+- 教训：第一版导入了早期流程的输出（验证集 1774 人），和它自己的汇总文件比对全部通过，但那两个文件本身已被端点 B 取代。核对只能证明和基准一致，基准选错照样通过；改为以提交的论文正文为基准后发现并修正。
 - 运行：python scripts/import_results.py；测试：python -m unittest tests.test_import_results -v
