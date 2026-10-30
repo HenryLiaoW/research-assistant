@@ -346,3 +346,17 @@ token 账：第 1 轮 prompt 452（规则 + 问题 + 菜单），第 2 轮 631�
 - 导入自带核对，以论文正文为基准：表 4.1（16 个格子 × 种子级 ARI、SD、塌缩次数、平均最小簇占比、log-rank 中位数，80/80）、最终版 cell_summary.csv 全精度（48/48）、表 4.4 与 4.5 节的簇大小、死亡率和最大效应（15/15）、表 4.6 测试集 ARI 和 C-index、对照 C-index 0.503（7/7）。任何一项不符就不写库。
 - 教训：第一版导入了早期流程的输出（验证集 1774 人），和它自己的汇总文件比对全部通过，但那两个文件本身已被端点 B 取代。核对只能证明和基准一致，基准选错照样通过；改为以提交的论文正文为基准后发现并修正。
 - 运行：python scripts/import_results.py；测试：python -m unittest tests.test_import_results -v
+
+## DataAgent 块 2 —— 数据问答评估题（2026-10-30）
+
+- eval/make_data_gold.py：开发集 20 题（筛选排序、跨表关联、成对比较、派生指标、阈值计数、多步、测试集、对照、聚类画像、资料外、写操作）+ 留出集 8 题；输出到 eval/local/（不进 git）。
+- 金标准只读论文最终版自己的输出文件、用 pandas 计算，不读数据库、不调用导入脚本：避免同一个 join 错误在题目和系统里各犯一次。
+
+## DataAgent 块 3 —— 数据目录与只读 SQL 查询（2026-10-30）
+
+- 数据统一入库：任何 CSV 先用 scripts/import_csv.py 导成一张表，Agent 只通过一个只读 SQL 工具查询；原 CSV 工具下一块从 Agent 工具集中移除（它读的是合成示例数据，和真实结果并存会让模型路由到假数据上）。示例数据导成 sample_results 表。
+- 数据目录：库里 meta_tables / meta_columns / meta_notes 三张元数据表，导入时登记表说明、列说明、术语和数据事实；工具的表白名单和给模型看的表结构都从这里生成，新数据导入后不改代码即可查询；data/results_schema.md 由元数据自动生成。
+- data_tools.query 的安全机制：只读打开（mode=ro）；set_authorizer 只放行 SELECT、读白名单表、函数（禁 load_extension 等）、递归 CTE；单条语句；行数上限（多取一行判断截断）；超时中断（progress handler，无限递归 CTE 会被中断）；SQL 长度上限。错误信息写清原因和可查询的表，模型下一轮能改正。
+- 实现中发现并修正：表名大小写（SQLite 不区分）、CTE 名会触发对"表"的读取检查（只放行库里不存在的名字，不能借 CTE 绕过白名单）、多语句在新版 Python 抛 sqlite3.Warning 而不是 ProgrammingError。
+- import_results.py 改为把自己的表替换进目标库，不影响 import_csv 导入的其他表。
+- 测试：tests/test_data_tools.py 15 个（写操作 / 系统表 / 未登记表 / PRAGMA / ATTACH / 多语句 / 超时被拒，只读连接兜底，新登记的表可查）。
